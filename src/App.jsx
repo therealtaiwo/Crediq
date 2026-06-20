@@ -15,7 +15,7 @@ import {
 import {
   doc, getDoc, setDoc, updateDoc, addDoc,
   collection, query, where, getDocs, serverTimestamp, increment, arrayUnion, limit,
-  onSnapshot
+  onSnapshot, runTransaction
 } from "firebase/firestore";
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
@@ -1207,6 +1207,65 @@ const PendingSessions = {
 
 // ─── FIREBASE HELPERS ─────────────────────────────────────────────────────────
 const getUserDoc = async uid => { const s=await getDoc(doc(db,"users",uid)); return s.exists()?s.data():null; };
+
+// ── REFERRAL CREDIT — single source of truth for both redemption paths ─────
+// (signup via ?ref= URL, and manually typing a code during onboarding).
+// Atomically increments the referrer's referralCount and grants the 3-friend
+// (7 days) / 10-friend (permanent) premium unlock exactly once per tier —
+// using a transaction so concurrent referrals can't race past a threshold.
+const creditReferralSignup = async (rawCode,newUserUid,newUserName)=>{
+  const code=(rawCode||"").trim().toUpperCase();
+  if(!code)return false;
+  try{
+    const uq=query(collection(db,"users"),where("referralCode","==",code));
+    const uSnap=await getDocs(uq);
+    if(uSnap.empty)return false; // not a valid code
+    const referrerId=uSnap.docs[0].id;
+
+    // Legacy referrals/{code} doc — best-effort, kept for anything still reading it
+    try{
+      const signupEntry={uid:newUserUid,name:newUserName||"",date:new Date().toISOString(),isPaid:false};
+      await updateDoc(doc(db,"referrals",code),{signups:increment(1),signupsList:arrayUnion(signupEntry)});
+    }catch(e){console.warn("Legacy referrals doc update failed:",e);}
+
+    // Source of truth: atomic count + tier unlock
+    try{
+      await runTransaction(db,async(tx)=>{
+        const refDoc=doc(db,"users",referrerId);
+        const snap=await tx.get(refDoc);
+        const prevCount=snap.data()?.referralCount||0;
+        const newCount=prevCount+1;
+        const currentUnlock=snap.data()?.referralUnlock;
+        const updates={referralCount:increment(1)};
+        if(newCount>=3&&currentUnlock!=="permanent"&&currentUnlock!=="7days"){
+          updates.isPremium=true;
+          updates.premiumExpiry=new Date(Date.now()+7*24*60*60*1000).toISOString();
+          updates.referralUnlock="7days";
+        }
+        if(newCount>=10&&currentUnlock!=="permanent"){
+          updates.isPremium=true;
+          updates.premiumExpiry=null;
+          updates.referralUnlock="permanent";
+        }
+        tx.update(refDoc,updates);
+      });
+    }catch(e){
+      console.error("Referral tier-unlock transaction failed:",e);
+      await updateDoc(doc(db,"users",referrerId),{referralCount:increment(1)}); // don't lose the count even if the tier-check fails
+    }
+
+    // Ambassador first-touch attribution — separate system, best-effort
+    try{
+      await setDoc(doc(db,"ambassadors",code),{code,totalReferrals:increment(1),lastSignup:new Date().toISOString()},{merge:true});
+    }catch(e){}
+
+    return true;
+  }catch(e){
+    console.error("creditReferralSignup error:",e);
+    return false;
+  }
+};
+
 const createUserDoc = async (uid,{name,email,referredBy=null}) => {
   const referralCode=makeRef(uid);
   const data={uid,name,email,course:null,subjects:[],onboarded:false,isPremium:false,questionsToday:0,lastActiveDate:new Date().toDateString(),referralCode,referredBy,referralCount:0,referralBalance:0,weakTopics:[],streak:0,createdAt:serverTimestamp(),
@@ -1217,38 +1276,7 @@ const createUserDoc = async (uid,{name,email,referredBy=null}) => {
   await setDoc(doc(db,"referrals",referralCode),{uid,name,referralCode,signups:0,conversions:0,earnings:0,createdAt:serverTimestamp()});
   // Credit referrer in background — don't block signup
   if(referredBy){
-    (async()=>{
-      try{
-        // Update existing referrals doc (legacy system)
-        const refSnap=await getDoc(doc(db,"referrals",referredBy));
-        if(refSnap.exists()){
-          const signupEntry={uid,name,date:new Date().toISOString(),isPaid:false};
-          await updateDoc(doc(db,"referrals",referredBy),{signups:increment(1),signupsList:arrayUnion(signupEntry)});
-          const uq=query(collection(db,"users"),where("referralCode","==",referredBy));
-          const uSnap=await getDocs(uq);
-          if(!uSnap.empty){
-            await updateDoc(doc(db,"users",uSnap.docs[0].id),{referralCount:increment(1)});
-            // ── REFERRAL UNLOCK: auto-grant premium at 3 and 10 referrals ──
-            const referrerSnap=await getDoc(doc(db,"users",uSnap.docs[0].id));
-            const newCount=(referrerSnap.data()?.referralCount||0)+1;
-            if(newCount===3){
-              // 7 days free premium
-              const expiry=new Date(Date.now()+7*24*60*60*1000).toISOString();
-              await updateDoc(doc(db,"users",uSnap.docs[0].id),{isPremium:true,premiumExpiry:expiry,referralUnlock:"7days"});
-            }else if(newCount===10){
-              // Permanent premium
-              await updateDoc(doc(db,"users",uSnap.docs[0].id),{isPremium:true,premiumExpiry:null,referralUnlock:"permanent"});
-            }
-          }
-        }
-        // First-touch attribution — update ambassadors collection (creates doc if not exists)
-        await setDoc(doc(db,"ambassadors",referredBy.toUpperCase()),{
-          code:referredBy.toUpperCase(),
-          totalReferrals:increment(1),
-          lastSignup:new Date().toISOString(),
-        },{merge:true});
-      }catch(e){console.error("Referral credit error:",e);}
-    })();
+    creditReferralSignup(referredBy,uid,name).catch(e=>console.error("Referral credit error:",e));
   }
   return data;
 };
@@ -2435,23 +2463,9 @@ function OnboardScreen({user,onDone,dark,setDark,T}){
       const code=refCode.trim().toUpperCase();
       if(code){
         try{
-          const refSnap=await getDoc(doc(db,"referrals",code));
-          if(refSnap.exists()){
-            resolvedRef=code;setRefStatus("valid");
-            try{await updateDoc(doc(db,"referrals",code),{signups:increment(1)});}catch(e){}
-          }else{
-            const uq=query(collection(db,"users"),where("referralCode","==",code));
-            const uSnap=await getDocs(uq);
-            if(!uSnap.empty){
-              resolvedRef=code;setRefStatus("valid");
-              const ambassadorUid=uSnap.docs[0].id;
-              try{
-                await updateDoc(doc(db,"users",ambassadorUid),{referralCount:increment(1)});
-                const signupEntry={uid:user.uid,name:user.name||"",date:new Date().toISOString(),isPaid:false};
-                await updateDoc(doc(db,"referrals",code),{signups:increment(1),signupsList:arrayUnion(signupEntry)});
-              }catch(e){}
-            }else{setRefStatus("invalid");}
-          }
+          const credited=await creditReferralSignup(code,user.uid,user.name);
+          if(credited){resolvedRef=code;setRefStatus("valid");}
+          else setRefStatus("invalid");
         }catch(e){console.warn("Referral check failed:",e);}
       }
       const requiredPoints=targetUni?getRequiredPoints(targetUni,course):parseInt(localStorage.getItem("cq_target_pts")||"13");
@@ -5414,15 +5428,18 @@ function FounderDashboardScreen({onBack,T,showToast}){
       const usersSnap=await getDocs(collection(db,"users"));
       const users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
       setAllUsers(users);
-      const total=users.length;
-      const premium=users.filter(u=>u.isPremium).length;
+      // Test accounts are excluded from every business metric below — they're
+      // still visible/manageable in the Users tab via the "Test" filter.
+      const realUsers=users.filter(u=>!u.isTestAccount);
+      const total=realUsers.length;
+      const premium=realUsers.filter(u=>u.isPremium).length;
       const conversion=total>0?((premium/total)*100).toFixed(1):0;
       const today=new Date().toDateString();
-      const activeToday=users.filter(u=>u.lastActiveDate===today).length;
-      const sessionsCompleted=users.reduce((acc,u)=>acc+(u.totalSessionsCompleted||0),0);
-      const schoolMap={};users.forEach(u=>{if(u.targetUniversity){schoolMap[u.targetUniversity]=(schoolMap[u.targetUniversity]||0)+1;}});
+      const activeToday=realUsers.filter(u=>u.lastActiveDate===today).length;
+      const sessionsCompleted=realUsers.reduce((acc,u)=>acc+(u.totalSessionsCompleted||0),0);
+      const schoolMap={};realUsers.forEach(u=>{if(u.targetUniversity){schoolMap[u.targetUniversity]=(schoolMap[u.targetUniversity]||0)+1;}});
       const topSchools=Object.entries(schoolMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-      const heardMap={};users.forEach(u=>{if(u.referralSource){heardMap[u.referralSource]=(heardMap[u.referralSource]||0)+1;}});
+      const heardMap={};realUsers.forEach(u=>{if(u.referralSource){heardMap[u.referralSource]=(heardMap[u.referralSource]||0)+1;}});
       const topHeard=Object.entries(heardMap).sort((a,b)=>b[1]-a[1]);
       const topicMap={};
       const sessSnap=await getDocs(collection(db,"sessions"));
@@ -5436,13 +5453,14 @@ function FounderDashboardScreen({onBack,T,showToast}){
       const totalPayouts=ambassadors.reduce((a,b)=>a+(b.earnings||0),0);
       const topAmbassadors=ambassadors.sort((a,b)=>(b.premiumReferrals||0)-(a.premiumReferrals||0)).slice(0,10)
         .map(a=>({code:a.code||a.id,name:a.name||"",referred:a.totalReferrals||0,premium:a.premiumReferrals||0,earned:a.earnings||0}));
-      // Revenue — daily conversions last 30 days
+      // Revenue — daily conversions last 30 days (real users only)
       const revenueByDay={};
-      users.filter(u=>u.paidAt).forEach(u=>{
+      realUsers.filter(u=>u.paidAt).forEach(u=>{
         const day=new Date(u.paidAt).toLocaleDateString("en-GB",{day:"2-digit",month:"short"});
         revenueByDay[day]=(revenueByDay[day]||0)+2500;
       });
-      setStats({total,premium,conversion,activeToday,sessionsCompleted,topSchools,topWeakTopics,topHeard,totalAmbassadors,totalReferred,totalPremiumReferrals,totalPayouts,topAmbassadors,revenueByDay,totalRevenue:premium*2500});
+      const testAccountCount=users.length-total;
+      setStats({total,premium,conversion,activeToday,sessionsCompleted,topSchools,topWeakTopics,topHeard,totalAmbassadors,totalReferred,totalPremiumReferrals,totalPayouts,topAmbassadors,revenueByDay,totalRevenue:premium*2500,testAccountCount});
       setError("");
     }catch(e){setError(e?.message||"Check Firestore rules — founder email needs read access.");}
     finally{setLoading(false);setRefreshing(false);}
@@ -5454,13 +5472,31 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const today3=new Date();today3.setDate(today3.getDate()-3);
   const filteredUsers=useMemo(()=>{
     let list=allUsers;
-    if(filter==="premium")list=list.filter(u=>u.isPremium);
-    else if(filter==="free")list=list.filter(u=>!u.isPremium);
-    else if(filter==="never")list=list.filter(u=>!u.totalSessionsCompleted||u.totalSessionsCompleted===0);
-    else if(filter==="inactive")list=list.filter(u=>{
-      if(!u.lastActiveDate)return true;
-      return new Date(u.lastActiveDate)<today3;
-    });
+    if(filter==="test"){
+      list=list.filter(u=>u.isTestAccount);
+    }else{
+      // Every other view is the "real users" view — test accounts stay
+      // reachable only via the dedicated Test filter, so they never
+      // quietly skew what the founder is looking at.
+      list=list.filter(u=>!u.isTestAccount);
+      if(filter==="premium")list=list.filter(u=>u.isPremium);
+      else if(filter==="free")list=list.filter(u=>!u.isPremium);
+      else if(filter==="never")list=list.filter(u=>!u.totalSessionsCompleted||u.totalSessionsCompleted===0);
+      else if(filter==="inactive")list=list.filter(u=>{
+        if(!u.lastActiveDate)return true;
+        return new Date(u.lastActiveDate)<today3;
+      });
+      else if(filter==="referred")list=list.filter(u=>!!u.referredBy);
+      else if(filter==="no_uni")list=list.filter(u=>!u.targetUniversity);
+      else if(filter==="today"){
+        const todayStr=new Date().toDateString();
+        list=list.filter(u=>u.createdAt?.toDate?.()?.toDateString()===todayStr);
+      }
+      else if(filter==="week"){
+        const weekAgo=Date.now()-7*24*60*60*1000;
+        list=list.filter(u=>{const t=u.createdAt?.toDate?.()?.getTime();return t&&t>=weekAgo;});
+      }
+    }
     if(search.trim()){
       const q=search.toLowerCase();
       list=list.filter(u=>(u.name||"").toLowerCase().includes(q)||(u.email||"").toLowerCase().includes(q)||(u.targetUniversity||"").toLowerCase().includes(q));
@@ -5470,10 +5506,11 @@ function FounderDashboardScreen({onBack,T,showToast}){
 
   // Email recipient count
   useEffect(()=>{
-    if(emailFilter==="all")setEmailCount(allUsers.filter(u=>u.email).length);
-    else if(emailFilter==="premium")setEmailCount(allUsers.filter(u=>u.isPremium&&u.email).length);
-    else if(emailFilter==="free")setEmailCount(allUsers.filter(u=>!u.isPremium&&u.email).length);
-    else if(emailFilter==="inactive")setEmailCount(allUsers.filter(u=>u.email&&(!u.totalSessionsCompleted||u.totalSessionsCompleted===0)).length);
+    const real=allUsers.filter(u=>!u.isTestAccount);
+    if(emailFilter==="all")setEmailCount(real.filter(u=>u.email).length);
+    else if(emailFilter==="premium")setEmailCount(real.filter(u=>u.isPremium&&u.email).length);
+    else if(emailFilter==="free")setEmailCount(real.filter(u=>!u.isPremium&&u.email).length);
+    else if(emailFilter==="inactive")setEmailCount(real.filter(u=>u.email&&(!u.totalSessionsCompleted||u.totalSessionsCompleted===0)).length);
   },[emailFilter,allUsers]);
 
   const grantPremium=async(targetUser,revoke)=>{
@@ -5497,13 +5534,24 @@ function FounderDashboardScreen({onBack,T,showToast}){
     }catch{showToast?.("Failed","error");}
   };
 
+  const toggleTestAccount=async(targetUser)=>{
+    const next=!targetUser.isTestAccount;
+    try{
+      await updateDoc(doc(db,"users",targetUser.id),{isTestAccount:next});
+      setAllUsers(prev=>prev.map(u=>u.id===targetUser.id?{...u,isTestAccount:next}:u));
+      setSelectedUser(u=>({...u,isTestAccount:next}));
+      showToast?.(next?"Marked as test account — excluded from stats":"Unmarked — now counted as a real user","success");
+      load(true); // stats need to recompute with/without this account
+    }catch{showToast?.("Failed — check Firestore rules","error");}
+  };
+
   const sendEmail=async()=>{
     if(!emailSubject.trim()||!emailBody.trim()){showToast?.("Fill in subject and body","error");return;}
     const apiKey=import.meta.env.VITE_BREVO_API_KEY;
     if(!apiKey){showToast?.("Add VITE_BREVO_API_KEY to Vercel environment variables","error");return;}
     setSending(true);
     try{
-      let recipients=allUsers.filter(u=>u.email);
+      let recipients=allUsers.filter(u=>u.email&&!u.isTestAccount);
       if(emailFilter==="premium")recipients=recipients.filter(u=>u.isPremium);
       else if(emailFilter==="free")recipients=recipients.filter(u=>!u.isPremium);
       else if(emailFilter==="inactive")recipients=recipients.filter(u=>!u.totalSessionsCompleted||u.totalSessionsCompleted===0);
@@ -5582,7 +5630,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
 
   const TABS=[
     {id:"analytics",label:"ANALYTICS"},
-    {id:"users",label:`USERS (${allUsers.length})`},
+    {id:"users",label:`USERS (${allUsers.filter(u=>!u.isTestAccount).length})`},
     {id:"churn",label:"CHURN"},
     {id:"email",label:"EMAIL"},
   ];
@@ -5691,9 +5739,9 @@ function FounderDashboardScreen({onBack,T,showToast}){
                 <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
                   <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, email, school…"
                     style={{flex:"1 1 200px",padding:"10px 14px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:11,outline:"none"}}/>
-                  {["all","premium","free","never","inactive"].map(f=>(
+                  {["all","premium","free","never","inactive","referred","no_uni","today","week","test"].map(f=>(
                     <button key={f} onClick={()=>setFilter(f)} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${filter===f?T.gold:T.border}`,background:filter===f?`${T.gold}12`:"transparent",color:filter===f?T.gold:T.muted,fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",letterSpacing:"0.06em",flexShrink:0}}>
-                      {f==="never"?"NEVER PRACTICED":f==="inactive"?"INACTIVE 3D+":f.toUpperCase()}
+                      {f==="never"?"NEVER PRACTICED":f==="inactive"?"INACTIVE 3D+":f==="no_uni"?"NO UNI SET":f==="today"?"JOINED TODAY":f==="week"?"JOINED 7D":f==="test"?`TEST (${allUsers.filter(u=>u.isTestAccount).length})`:f.toUpperCase()}
                     </button>
                   ))}
                 </div>
@@ -5707,6 +5755,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
                           <div style={{fontSize:14,fontWeight:600,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name||"No name"}</div>
                           {u.isPremium&&<div style={{flexShrink:0,background:"rgba(74,222,128,0.15)",border:"1px solid rgba(74,222,128,0.3)",borderRadius:10,padding:"2px 8px",fontFamily:"'DM Mono',monospace",fontSize:7,color:"#4ade80"}}>PREMIUM</div>}
+                          {u.isTestAccount&&<div style={{flexShrink:0,background:"rgba(154,168,154,0.15)",border:"1px solid rgba(154,168,154,0.3)",borderRadius:10,padding:"2px 8px",fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted}}>TEST</div>}
                         </div>
                         <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>
                       </div>
@@ -5719,56 +5768,6 @@ function FounderDashboardScreen({onBack,T,showToast}){
                   ))}
                   {filteredUsers.length===0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,textAlign:"center",padding:40}}>No students match this filter.</div>}
                 </div>
-
-                {/* ── USER DETAIL MODAL ── */}
-                {selectedUser&&(
-                  <div style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}
-                    onClick={e=>{if(e.target===e.currentTarget)setSelectedUser(null);}}>
-                    <motion.div initial={{y:400}} animate={{y:0}} exit={{y:400}} transition={{type:"spring",stiffness:280,damping:28}}
-                      style={{width:"100%",maxWidth:540,background:T.bg,borderRadius:"20px 20px 0 0",padding:"0 0 env(safe-area-inset-bottom,0)",maxHeight:"90dvh",overflowY:"auto",boxShadow:"0 -20px 60px rgba(0,0,0,0.5)"}}>
-                      <div style={{position:"sticky",top:0,background:T.bg,padding:"14px 18px 12px",borderBottom:`1px solid ${T.border}`,zIndex:1}}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                          <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:900,color:T.text}}>{selectedUser.name||"Student"}</div>
-                          <button onClick={()=>setSelectedUser(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:20}}>✕</button>
-                        </div>
-                      </div>
-                      <div style={{padding:"18px"}}>
-                        {[
-                          ["Email",selectedUser.email],
-                          ["School",selectedUser.targetUniversity||"—"],
-                          ["Course",selectedUser.course||"—"],
-                          ["Subjects",(selectedUser.subjects||[]).join(", ")||"—"],
-                          ["Sessions",selectedUser.totalSessionsCompleted||0],
-                          ["Last Active",selectedUser.lastActiveDate||"Never"],
-                          ["Referred By",selectedUser.referredBy||"Direct"],
-                          ["Referrals Made",selectedUser.referralCount||0],
-                          ["Profile Edits",selectedUser.profileEdits||0],
-                          ["Joined",selectedUser.createdAt?.toDate?.().toLocaleDateString("en-GB")||"—"],
-                          ["How Found",selectedUser.referralSource||"—"],
-                        ].map(([k,v])=>(
-                          <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
-                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.1em"}}>{k.toUpperCase()}</div>
-                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.text,textAlign:"right",maxWidth:"60%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(v)}</div>
-                          </div>
-                        ))}
-                        <div style={{display:"flex",gap:10,marginTop:18}}>
-                          <button onClick={()=>grantPremium(selectedUser,selectedUser.isPremium)} disabled={grantingPremium} className="btn-press"
-                            style={{flex:1,padding:"12px 0",border:`1px solid ${selectedUser.isPremium?"rgba(239,68,68,0.4)":"rgba(74,222,128,0.4)"}`,borderRadius:8,background:selectedUser.isPremium?"rgba(239,68,68,0.08)":"rgba(74,222,128,0.08)",color:selectedUser.isPremium?"#ef4444":"#4ade80",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-                            {grantingPremium?"...":(selectedUser.isPremium?"REVOKE PREMIUM":"GRANT PREMIUM")}
-                          </button>
-                          <button onClick={()=>resetProfileEdits(selectedUser)} className="btn-press"
-                            style={{flex:1,padding:"12px 0",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
-                            RESET EDITS
-                          </button>
-                        </div>
-                        <button onClick={()=>{navigator.clipboard?.writeText(selectedUser.email);showToast?.("Email copied","success");}} className="btn-press"
-                          style={{width:"100%",marginTop:10,padding:"12px 0",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
-                          COPY EMAIL
-                        </button>
-                      </div>
-                    </motion.div>
-                  </div>
-                )}
               </div>
             )}
 
@@ -5849,8 +5848,69 @@ function FounderDashboardScreen({onBack,T,showToast}){
               </div>
             )}
 
+            {/* ── USER DETAIL MODAL — sibling of every tab, so it works from Users AND Churn ── */}
+            <AnimatePresence>
+              {selectedUser&&(
+                <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+                  style={{position:"fixed",inset:0,zIndex:600,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}
+                  onClick={e=>{if(e.target===e.currentTarget)setSelectedUser(null);}}>
+                  <motion.div initial={{y:400}} animate={{y:0}} exit={{y:400}} transition={{type:"spring",stiffness:280,damping:28}}
+                    style={{width:"100%",maxWidth:540,background:T.bg,borderRadius:"20px 20px 0 0",padding:"0 0 env(safe-area-inset-bottom,0)",maxHeight:"90dvh",overflowY:"auto",boxShadow:"0 -20px 60px rgba(0,0,0,0.5)"}}>
+                    <div style={{position:"sticky",top:0,background:T.bg,padding:"14px 18px 12px",borderBottom:`1px solid ${T.border}`,zIndex:1}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:900,color:T.text}}>{selectedUser.name||"Student"}</div>
+                          {selectedUser.isTestAccount&&<div style={{background:"rgba(154,168,154,0.15)",border:"1px solid rgba(154,168,154,0.3)",borderRadius:10,padding:"2px 8px",fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted}}>TEST</div>}
+                        </div>
+                        <button onClick={()=>setSelectedUser(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:20}}>✕</button>
+                      </div>
+                    </div>
+                    <div style={{padding:"18px"}}>
+                      {[
+                        ["Email",selectedUser.email],
+                        ["School",selectedUser.targetUniversity||"—"],
+                        ["Course",selectedUser.course||"—"],
+                        ["Subjects",(selectedUser.subjects||[]).join(", ")||"—"],
+                        ["Sessions",selectedUser.totalSessionsCompleted||0],
+                        ["Last Active",selectedUser.lastActiveDate||"Never"],
+                        ["Referred By",selectedUser.referredBy||"Direct"],
+                        ["Referrals Made",selectedUser.referralCount||0],
+                        ["Profile Edits",selectedUser.profileEdits||0],
+                        ["Joined",selectedUser.createdAt?.toDate?.().toLocaleDateString("en-GB")||"—"],
+                        ["How Found",selectedUser.referralSource||"—"],
+                      ].map(([k,v])=>(
+                        <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.1em"}}>{k.toUpperCase()}</div>
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.text,textAlign:"right",maxWidth:"60%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(v)}</div>
+                        </div>
+                      ))}
+                      <div style={{display:"flex",gap:10,marginTop:18}}>
+                        <button onClick={()=>grantPremium(selectedUser,selectedUser.isPremium)} disabled={grantingPremium} className="btn-press"
+                          style={{flex:1,padding:"12px 0",border:`1px solid ${selectedUser.isPremium?"rgba(239,68,68,0.4)":"rgba(74,222,128,0.4)"}`,borderRadius:8,background:selectedUser.isPremium?"rgba(239,68,68,0.08)":"rgba(74,222,128,0.08)",color:selectedUser.isPremium?"#ef4444":"#4ade80",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                          {grantingPremium?"...":(selectedUser.isPremium?"REVOKE PREMIUM":"GRANT PREMIUM")}
+                        </button>
+                        <button onClick={()=>resetProfileEdits(selectedUser)} className="btn-press"
+                          style={{flex:1,padding:"12px 0",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
+                          RESET EDITS
+                        </button>
+                      </div>
+                      <button onClick={()=>toggleTestAccount(selectedUser)} className="btn-press"
+                        style={{width:"100%",marginTop:10,padding:"12px 0",border:`1px solid ${selectedUser.isTestAccount?"rgba(74,222,128,0.4)":T.border}`,borderRadius:8,background:selectedUser.isTestAccount?"rgba(74,222,128,0.08)":"transparent",color:selectedUser.isTestAccount?"#4ade80":T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
+                        {selectedUser.isTestAccount?"UNMARK AS TEST ACCOUNT":"MARK AS TEST ACCOUNT"}
+                      </button>
+                      <button onClick={()=>{navigator.clipboard?.writeText(selectedUser.email);showToast?.("Email copied","success");}} className="btn-press"
+                        style={{width:"100%",marginTop:10,padding:"12px 0",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
+                        COPY EMAIL
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}40`,textAlign:"center",margin:"24px 0",lineHeight:1.8,letterSpacing:"0.08em"}}>
               LIVE FROM FIRESTORE · ONLY VISIBLE TO FOUNDER ACCOUNT
+              {stats.testAccountCount>0&&<><br/>{stats.testAccountCount} test account{stats.testAccountCount!==1?"s":""} excluded from stats above</>}
             </div>
           </>
         )}
@@ -5866,12 +5926,18 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
   const[course,setCourse]=useState(user.course||"");
   const[targetUni,setTargetUni]=useState(user.targetUniversity||"");
   const[subjects,setSubjects]=useState(user.subjects||[]);
+  const[uniSearch,setUniSearch]=useState("");
+  const[howHeard,setHowHeard]=useState(user.referralSource||"");
   const[saving,setSaving]=useState(false);
   const[step,setStep]=useState(0); // 0=name+course, 1=university, 2=subjects
 
   const group=Object.entries(COURSE_GROUPS).find(([,g])=>g.courses.includes(course))?.[0]||"Sciences";
   const availableSubjects=COURSE_GROUPS[group]?.subjects||[];
   const requiredPoints=targetUni&&course?getRequiredPoints(targetUni,course):(user.requiredPoints||13);
+  const uniSearchResults=useMemo(()=>searchUniversities(uniSearch,course||null),[uniSearch,course]);
+  const jupebUniResults=uniSearchResults.filter(u=>u.acceptsJUPEB);
+  const nonJupebUniHit=uniSearchResults.filter(u=>!u.acceptsJUPEB);
+  const currentUniData=UNIVERSITIES_DATA.find(u=>u.shortName===targetUni);
 
   const profileEdits=user.profileEdits||0;
   const signedUpAt=user.createdAt?.toDate?.()||new Date(user.createdAt)||new Date();
@@ -5893,6 +5959,7 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
         name:name.trim(),course,group,
         subjects,targetUniversity:targetUni,
         targetPoints:requiredPoints,requiredPoints,
+        referralSource:howHeard||user.referralSource||null,
         profileEdits:increment(1),
         lastProfileEdit:new Date().toISOString()
       };
@@ -5974,13 +6041,61 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
         {/* University */}
         <div style={{marginBottom:20}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:8}}>TARGET UNIVERSITY</div>
+
+          {targetUni&&(
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",marginBottom:10,background:`${T.gold}12`,border:`1px solid ${T.gold}40`,borderRadius:8}}>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold,fontWeight:700}}>✓ {targetUni}{currentUniData?` — ${currentUniData.name}`:""}</span>
+              <button onClick={()=>setTargetUni("")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14}}>×</button>
+            </div>
+          )}
+
+          <div style={{position:"relative",marginBottom:10}}>
+            <input value={uniSearch} onChange={e=>setUniSearch(e.target.value)}
+              placeholder="Search by name, city, or abbreviation…"
+              style={{width:"100%",background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px 12px 36px",fontSize:12,color:T.text,outline:"none",fontFamily:"'DM Mono',monospace",boxSizing:"border-box"}}/>
+            <div style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:T.muted,pointerEvents:"none",fontSize:13}}>🔍</div>
+            {uniSearch&&(
+              <button onClick={()=>setUniSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>
+            )}
+          </div>
+
+          {nonJupebUniHit.length>0&&uniSearch.length>=2&&(
+            <div style={{marginBottom:10,padding:"10px 12px",background:"rgba(245,158,11,0.07)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:8}}>
+              {nonJupebUniHit.map(u=>(
+                <div key={u.shortName} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#f59e0b",lineHeight:1.6}}>
+                  ⚠️ {u.shortName}: {u.jupebWarning}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{maxHeight:280,overflowY:"auto",display:"flex",flexDirection:"column",gap:6,border:`1px solid ${T.border}`,borderRadius:8,padding:8}}>
+            {jupebUniResults.length===0
+              ?<div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,textAlign:"center",padding:16}}>No matches — try a different search.</div>
+              :jupebUniResults.map(u=>{
+                const sel=targetUni===u.shortName;
+                return(
+                  <button key={u.shortName} onClick={()=>{setTargetUni(u.shortName);setUniSearch("");}}
+                    style={{padding:"9px 12px",borderRadius:7,border:`1px solid ${sel?T.gold:T.border}`,background:sel?`${T.gold}15`:"transparent",color:sel?T.gold:T.text,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.shortName} <span style={{color:T.muted}}>· {u.location}</span></span>
+                    {u.courses[course]&&<span style={{flexShrink:0,color:sel?T.gold:T.muted,fontSize:9}}>{u.courses[course].minPoints}pts</span>}
+                  </button>
+                );
+              })
+            }
+          </div>
+        </div>
+
+        {/* How heard */}
+        <div style={{marginBottom:20}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:8}}>HOW DID YOU HEAR ABOUT US?</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {UNIVERSITIES_DATA.filter(u=>u.acceptsJUPEB).slice(0,12).map(u=>{
-              const sel=targetUni===u.shortName;
+            {HEARD_OPTIONS.map(h=>{
+              const sel=howHeard===h;
               return(
-                <button key={u.shortName} onClick={()=>setTargetUni(u.shortName)}
+                <button key={h} onClick={()=>setHowHeard(h)}
                   style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${sel?T.gold:T.border}`,background:sel?`${T.gold}15`:"transparent",color:sel?T.gold:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer",textAlign:"left"}}>
-                  {u.shortName}
+                  {h}
                 </button>
               );
             })}

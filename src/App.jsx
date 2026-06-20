@@ -5933,6 +5933,13 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
 
   const group=Object.entries(COURSE_GROUPS).find(([,g])=>g.courses.includes(course))?.[0]||"Sciences";
   const availableSubjects=COURSE_GROUPS[group]?.subjects||[];
+
+  // When course changes to a different group, drop subjects that no longer belong —
+  // otherwise old subjects silently occupy the 3-subject slot and block new selections.
+  useEffect(()=>{
+    setSubjects(prev=>prev.filter(s=>availableSubjects.includes(s)));
+  },[group]);
+
   const requiredPoints=targetUni&&course?getRequiredPoints(targetUni,course):(user.requiredPoints||13);
   const uniSearchResults=useMemo(()=>searchUniversities(uniSearch,course||null),[uniSearch,course]);
   const jupebUniResults=uniSearchResults.filter(u=>u.acceptsJUPEB);

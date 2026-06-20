@@ -60,8 +60,8 @@ async function requestNotifPermission(user){
 }
 
 // ─── THEMES ──────────────────────────────────────────────────────────────────
-const DARK = { bg:"#0a1410",bg2:"#0f2218",surface:"#1B3A2A",surface2:"#264D38",gold:"#B8973E",gold2:"#D4AE5A",text:"#F7F3EC",muted:"#9AA89A",border:"rgba(184,151,62,0.22)",danger:"#C0392B",success:"#4ade80",warn:"#f97316",navBg:"#0f2218",navBorder:"rgba(184,151,62,0.15)" };
-const LIGHT = { bg:"#F5F0E8",bg2:"#EDE7D8",surface:"#FFFFFF",surface2:"#F0EBE0",gold:"#9A7A28",gold2:"#B8973E",text:"#1B2E1F",muted:"#8A988A",border:"rgba(154,122,40,0.22)",danger:"#C0392B",success:"#16a34a",warn:"#ea580c",navBg:"#1B3A2A",navBorder:"rgba(184,151,62,0.2)" };
+const DARK = { bg:"#0a1410",bg2:"#0f2218",surface:"#1B3A2A",surface2:"#264D38",gold:"#B8973E",gold2:"#D4AE5A",text:"#F7F3EC",muted:"#9AA89A",textSecondary:"rgba(247,243,236,0.72)",textTertiary:"rgba(247,243,236,0.42)",border:"rgba(184,151,62,0.22)",danger:"#C0392B",success:"#4ade80",warn:"#f97316",navBg:"#0f2218",navBorder:"rgba(184,151,62,0.15)" };
+const LIGHT = { bg:"#F5F0E8",bg2:"#EDE7D8",surface:"#FFFFFF",surface2:"#F0EBE0",gold:"#9A7A28",gold2:"#B8973E",text:"#1B2E1F",muted:"#8A988A",textSecondary:"rgba(27,46,31,0.66)",textTertiary:"rgba(27,46,31,0.40)",border:"rgba(154,122,40,0.22)",danger:"#C0392B",success:"#16a34a",warn:"#ea580c",navBg:"#1B3A2A",navBorder:"rgba(184,151,62,0.2)" };
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const FREE_DAILY_LIMIT = 50;
@@ -3142,62 +3142,29 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           );
         })()}
 
-        {/* ── DREAM TARGET STRIP ── */}
-        {uniData&&(
-          <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:0.08,ease:EASE}}
-            style={{padding:"14px 16px",marginBottom:16,background:T.surface,border:`1px solid ${T.border}`,borderRadius:14}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}66`,letterSpacing:"0.18em",marginBottom:8}}>YOUR TARGET</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-              <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"45%"}}>
-                {uniData.shortName} · {targetCourse.split("/")[0].trim()}
-              </div>
-              <div style={{display:"flex",gap:16,flexShrink:0}}>
-                <div style={{textAlign:"center"}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,letterSpacing:"0.1em",marginBottom:2}}>REQUIRED</div>
-                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:T.gold}}>{targetPts} pts</div>
-                </div>
-                {pointsData&&(
-                  <>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,letterSpacing:"0.1em",marginBottom:2}}>CURRENT</div>
-                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:scoreColor}}>{pointsData.total.toFixed(1)} pts</div>
-                    </div>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,letterSpacing:"0.1em",marginBottom:2}}>GAP</div>
-                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:Number(gap)<=0?"#4ade80":"#f97316"}}>
-                        {Number(gap)<=0?"✓ Met":"+"+gap+" pts"}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-            {pointsData&&Number(gap)>0&&Number(gap)<=4&&(
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}70`,marginTop:8,lineHeight:1.6}}>
-                You're closer than you think. Every session moves the number.
-              </div>
-            )}
-          </motion.div>
-        )}
-
+        {/* ── HERO: YOUR JUPEB MISSION — single card; the old separate "Dream
+             Target Strip" duplicated this same current/target/gap data in its
+             own box above, so it's been folded in here instead of removed
+             redundantly twice. Real contrast tiers (textSecondary/Tertiary)
+             replace the old flat low-alpha-everywhere treatment. ── */}
         <motion.div initial={{opacity:0,y:40}} animate={{opacity:1,y:0}} transition={{type:"spring",stiffness:260,damping:24,delay:0.1}} style={{
           background:"linear-gradient(170deg,#020C06 0%,#091508 45%,#020C06 100%)",
-          border:`1px solid ${hasData&&pointsData?`${scoreColor}22`:T.border}`,
+          border:`1px solid ${hasData&&pointsData?`${scoreColor}38`:T.border}`,
           borderRadius:24,marginBottom:16,overflow:"hidden",position:"relative",
-          boxShadow:`0 0 0 1px ${hasData&&pointsData?`${scoreColor}09`:"transparent"},0 24px 64px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.04)`
+          boxShadow:`0 0 0 1px ${hasData&&pointsData?`${scoreColor}14`:"transparent"},0 24px 64px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.05)`
         }}>
 
           {/* ── TOP ACCENT BAR ── */}
           <div style={{height:2,background:`linear-gradient(90deg,transparent 0%,${hasData&&pointsData?scoreColor:T.gold}70 35%,${hasData&&pointsData?scoreColor:T.gold} 50%,${hasData&&pointsData?scoreColor:T.gold}70 65%,transparent 100%)`}}/>
 
           {/* ── HEADER ── */}
-          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",padding:"18px 20px 0"}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",padding:"20px 20px 0"}}>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.gold}50`,letterSpacing:"0.25em",marginBottom:5}}>{heroTitle}</div>
-              {uniData&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}65`,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{uniData.name} · {targetCourse.split("/")[0].trim()}</div>}
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(184,151,62,0.8)",letterSpacing:"0.24em",marginBottom:6}}>{heroTitle}</div>
+              {uniData&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.62)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{uniData.name} · {targetCourse.split("/")[0].trim()}</div>}
             </div>
             {statusInfo&&(
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,fontWeight:700,letterSpacing:"0.12em",color:statusInfo.color,background:`${statusInfo.color}12`,border:`1px solid ${statusInfo.color}30`,borderRadius:20,padding:"5px 11px",flexShrink:0,marginLeft:12}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.12em",color:statusInfo.color,background:`${statusInfo.color}1c`,border:`1px solid ${statusInfo.color}55`,borderRadius:20,padding:"6px 12px",flexShrink:0,marginLeft:12}}>
                 {statusInfo.label}
               </div>
             )}
@@ -3205,23 +3172,23 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
 
           {/* ── NO-DATA EMPTY STATE ── */}
           {!hasData?(
-            <div style={{padding:"28px 20px 24px"}}>
-              <div style={{display:"flex",justifyContent:"center",marginBottom:20}}>
+            <div style={{padding:"30px 20px 26px"}}>
+              <div style={{display:"flex",justifyContent:"center",marginBottom:22}}>
                 <div style={{position:"relative",width:224,height:224}}>
                   <svg width={224} height={224} style={{position:"absolute",inset:0,transform:"rotate(-90deg)"}}>
-                    <circle cx={112} cy={112} r={96} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={16} strokeDasharray="8 6" strokeLinecap="round"/>
+                    <circle cx={112} cy={112} r={96} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={16} strokeDasharray="8 6" strokeLinecap="round"/>
                   </svg>
-                  <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4}}>
-                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:52,fontWeight:900,color:`${T.gold}18`,lineHeight:1}}>0.0</div>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}35`,letterSpacing:"0.1em"}}>/ {targetPts} pts</div>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}25`,letterSpacing:"0.12em",marginTop:2}}>NOT STARTED</div>
+                  <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
+                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:52,fontWeight:900,color:"rgba(184,151,62,0.35)",lineHeight:1}}>0.0</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.45)",letterSpacing:"0.1em"}}>/ {targetPts} pts</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.32)",letterSpacing:"0.12em",marginTop:3}}>NOT STARTED</div>
                   </div>
                 </div>
               </div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}55`,marginBottom:20,lineHeight:2,textAlign:"center"}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.6)",marginBottom:22,lineHeight:2,textAlign:"center"}}>
                 {uniData
-                  ?<>{uniData.shortName} {targetCourse.split("/")[0].trim()} requires <span style={{color:T.gold,fontWeight:700}}>{targetPts} pts</span>.<br/>Your score tracker builds after your first session.</>
-                  :<>Your JUPEB score tracker builds as you practice.<br/><span style={{color:T.gold}}>First session unlocks everything.</span></>}
+                  ?<>{uniData.shortName} {targetCourse.split("/")[0].trim()} requires <span style={{color:T.gold2,fontWeight:700}}>{targetPts} pts</span>.<br/>Your score tracker builds after your first session.</>
+                  :<>Your JUPEB score tracker builds as you practice.<br/><span style={{color:T.gold2}}>First session unlocks everything.</span></>}
               </div>
               <button className="btn-press" onClick={()=>onNav("setup")} style={{width:"100%",minHeight:54,padding:"0 24px",border:"none",borderRadius:27,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 8px 28px rgba(0,75,59,0.45)",display:"flex",alignItems:"center",justifyContent:"center"}}>
                 Start First Session →
@@ -3229,115 +3196,100 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
             </div>
           ):(
             <>
-              {/* ── RING ── */}
-              <div style={{display:"flex",justifyContent:"center",padding:"22px 0 14px",position:"relative"}}>
-                {/* Ambient glow */}
-                <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:180,height:180,background:`radial-gradient(circle,${scoreColor}16 0%,transparent 70%)`,borderRadius:"50%",filter:"blur(28px)",pointerEvents:"none"}}/>
+              {/* ── RING — bigger, real gradient + glow, tabular figures so it doesn't jitter ── */}
+              <div style={{display:"flex",justifyContent:"center",padding:"24px 0 16px",position:"relative"}}>
+                <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:200,height:200,background:`radial-gradient(circle,${scoreColor}22 0%,transparent 70%)`,borderRadius:"50%",filter:"blur(30px)",pointerEvents:"none"}}/>
 
-                <div style={{position:"relative",width:224,height:224}}>
-                  <svg width={224} height={224} style={{position:"absolute",inset:0,transform:"rotate(-90deg)"}}>
+                <div style={{position:"relative",width:228,height:228}}>
+                  <svg width={228} height={228} style={{position:"absolute",inset:0,transform:"rotate(-90deg)"}}>
                     <defs>
                       <linearGradient id="cqRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor={scoreColor} stopOpacity={0.45}/>
+                        <stop offset="0%" stopColor={scoreColor} stopOpacity={0.6}/>
                         <stop offset="100%" stopColor={scoreColor} stopOpacity={1}/>
                       </linearGradient>
                     </defs>
                     {/* Track */}
-                    <circle cx={112} cy={112} r={96} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={16}/>
+                    <circle cx={114} cy={114} r={98} fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth={14}/>
                     {/* Quarter marks */}
                     {[0.25,0.5,0.75].map(t=>{
                       const a=t*2*Math.PI;
-                      return <line key={t} x1={112+96*Math.cos(a)} y1={112+96*Math.sin(a)} x2={112+80*Math.cos(a)} y2={112+80*Math.sin(a)} stroke="rgba(255,255,255,0.1)" strokeWidth={1.5}/>;
+                      return <line key={t} x1={114+98*Math.cos(a)} y1={114+98*Math.sin(a)} x2={114+82*Math.cos(a)} y2={114+82*Math.sin(a)} stroke="rgba(255,255,255,0.16)" strokeWidth={1.5}/>;
                     })}
-                    {/* Animated progress arc */}
-                    <motion.circle cx={112} cy={112} r={96} fill="none" stroke="url(#cqRingGrad)" strokeWidth={16} strokeLinecap="round"
-                      strokeDasharray={2*Math.PI*96}
-                      initial={{strokeDashoffset:2*Math.PI*96}}
-                      animate={{strokeDashoffset:2*Math.PI*96*(1-ringFrac)}}
+                    {/* Animated progress arc — real glow now, not a flat thin line */}
+                    <motion.circle cx={114} cy={114} r={98} fill="none" stroke="url(#cqRingGrad)" strokeWidth={14} strokeLinecap="round"
+                      strokeDasharray={2*Math.PI*98}
+                      initial={{strokeDashoffset:2*Math.PI*98}}
+                      animate={{strokeDashoffset:2*Math.PI*98*(1-ringFrac)}}
                       transition={{duration:1.6,delay:0.4,ease:EASE}}
+                      style={{filter:`drop-shadow(0 0 10px ${scoreColor}99)`}}
                     />
                     {/* Leading glow dot */}
                     {ringFrac>0.02&&ringFrac<0.98&&(
                       <motion.circle
-                        cx={112+96*Math.cos(2*Math.PI*ringFrac-Math.PI/2)}
-                        cy={112+96*Math.sin(2*Math.PI*ringFrac-Math.PI/2)}
+                        cx={114+98*Math.cos(2*Math.PI*ringFrac-Math.PI/2)}
+                        cy={114+98*Math.sin(2*Math.PI*ringFrac-Math.PI/2)}
                         r={7} fill={scoreColor}
                         initial={{opacity:0}} animate={{opacity:1}} transition={{delay:1.8}}
-                        style={{filter:`drop-shadow(0 0 8px ${scoreColor})`}}
+                        style={{filter:`drop-shadow(0 0 9px ${scoreColor})`}}
                       />
                     )}
                   </svg>
 
-                  {/* Center text */}
+                  {/* Center text — full contrast now, not faded into the background */}
                   <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-                    <motion.div initial={{scale:0.7,opacity:0}} animate={{scale:1,opacity:1}} transition={{type:"spring",stiffness:280,damping:20,delay:0.5}} style={{fontFamily:"'Playfair Display',serif",fontSize:54,fontWeight:900,lineHeight:0.9,letterSpacing:"-0.04em",color:scoreColor,textShadow:`0 0 40px ${scoreColor}45`,transition:"color 0.4s"}}>
+                    <motion.div initial={{scale:0.7,opacity:0}} animate={{scale:1,opacity:1}} transition={{type:"spring",stiffness:280,damping:20,delay:0.5}} style={{fontFamily:"'Playfair Display',serif",fontSize:56,fontWeight:900,lineHeight:0.9,letterSpacing:"-0.03em",color:"#F7F3EC",fontVariantNumeric:"tabular-nums"}}>
                       {pointsData?displayPoints.toFixed(1):readiness}
                     </motion.div>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}50`,letterSpacing:"0.08em",marginTop:10}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(247,243,236,0.55)",letterSpacing:"0.08em",marginTop:10}}>
                       {pointsData?`/ ${targetPts} pts`:"% ready"}
                     </div>
                     {pointsData&&Number(gap)>0&&(
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}32`,letterSpacing:"0.1em",marginTop:5}}>{Math.round(ringFrac*100)}% THERE</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.4)",letterSpacing:"0.1em",marginTop:6}}>{Math.round(ringFrac*100)}% THERE</div>
                     )}
                     {pointsData&&Number(gap)<=0&&(
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4ade80",letterSpacing:"0.1em",marginTop:5,fontWeight:700}}>GOAL MET ✓</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4ade80",letterSpacing:"0.1em",marginTop:6,fontWeight:700}}>GOAL MET ✓</div>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* ── PROGRESS + STATS ── */}
+              {/* ── STAT ROW + NARRATIVE — replaces both the old "Score/Gap-pill/Required"
+                   row AND the separate Dream Target Strip AND the separate Fastest
+                   Route box. One row, one sentence, said once. ── */}
               {pointsData&&(
                 <div style={{padding:"0 20px 20px"}}>
-                  {/* Thin progress bar */}
-                  <div style={{height:3,background:"rgba(255,255,255,0.05)",borderRadius:3,overflow:"hidden",marginBottom:16}}>
-                    <motion.div initial={{width:0}} animate={{width:`${Math.min(100,ringFrac*100)}%`}} transition={{duration:1.5,delay:0.7,ease:EASE}}
-                      style={{height:"100%",background:`linear-gradient(90deg,${scoreColor}60,${scoreColor})`,borderRadius:3}}/>
-                  </div>
-
-                  {/* Score — Gap pill — Required */}
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 4px",borderTop:"1px solid rgba(247,243,236,0.08)",borderBottom:"1px solid rgba(247,243,236,0.08)",marginBottom:16}}>
                     <div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}50`,letterSpacing:"0.14em",marginBottom:3}}>YOUR SCORE</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.45)",letterSpacing:"0.14em",marginBottom:4}}>CURRENT</div>
                       <div style={{display:"flex",alignItems:"baseline",gap:3}}>
-                        <span style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:700,color:scoreColor,lineHeight:1}}>{displayPoints.toFixed(1)}</span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}70`}}>pts</span>
+                        <span style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC",fontVariantNumeric:"tabular-nums"}}>{displayPoints.toFixed(1)}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.5)"}}>pts</span>
                       </div>
                     </div>
-
-                    {Number(gap)>0
-                      ?<div style={{padding:"7px 14px",background:`${scoreColor}0E`,border:`1px solid ${scoreColor}28`,borderRadius:20,fontFamily:"'DM Mono',monospace",fontSize:9,color:scoreColor,fontWeight:700,letterSpacing:"0.04em"}}>+{gap} needed</div>
-                      :<div style={{padding:"7px 14px",background:"rgba(74,222,128,0.08)",border:"1px solid rgba(74,222,128,0.22)",borderRadius:20,fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4ade80",fontWeight:700}}>✓ Achieved</div>
-                    }
-
+                    <div style={{width:1,height:30,background:"rgba(247,243,236,0.1)"}}/>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.45)",letterSpacing:"0.14em",marginBottom:4}}>GAP</div>
+                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:Number(gap)<=0?"#4ade80":scoreColor,fontVariantNumeric:"tabular-nums"}}>
+                        {Number(gap)<=0?"✓":"+"+gap}
+                      </div>
+                    </div>
+                    <div style={{width:1,height:30,background:"rgba(247,243,236,0.1)"}}/>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}50`,letterSpacing:"0.14em",marginBottom:3}}>REQUIRED</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.45)",letterSpacing:"0.14em",marginBottom:4}}>TARGET</div>
                       <div style={{display:"flex",alignItems:"baseline",gap:3,justifyContent:"flex-end"}}>
-                        <span style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:700,color:T.gold,lineHeight:1}}>{targetPts}</span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}70`}}>pts</span>
+                        <span style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:T.gold2,fontVariantNumeric:"tabular-nums"}}>{targetPts}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.5)"}}>pts</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Status message */}
-                  {statusInfo&&(
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:600,color:statusInfo.color,textAlign:"center",letterSpacing:"0.03em",padding:"9px 12px",background:`${statusInfo.color}08`,border:`1px solid ${statusInfo.color}16`,borderRadius:9}}>
-                      {statusInfo.msg}
+                  {(statusInfo||fastestRoute.length>=2)&&(
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.72)",lineHeight:1.9,textAlign:"center"}}>
+                      {statusInfo&&<span style={{color:statusInfo.color,fontWeight:600}}>{statusInfo.msg}</span>}
+                      {statusInfo&&fastestRoute.length>=2&&"  "}
+                      {fastestRoute.length>=2&&<>Fastest route: <span style={{color:T.gold2,fontWeight:700}}>{fastestRoute.slice(0,3).map(r=>r.subject).join(" → ")}</span></>}
                     </div>
                   )}
-                </div>
-              )}
-
-              {/* ── FASTEST ROUTE ── */}
-              {fastestRoute.length>=2&&(
-                <div style={{margin:"0 20px 20px",padding:"10px 14px",background:"rgba(255,255,255,0.02)",border:`1px solid rgba(255,255,255,0.06)`,borderRadius:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}40`,letterSpacing:"0.18em",flexShrink:0,marginRight:4}}>FASTEST ROUTE</span>
-                  {fastestRoute.slice(0,3).map((r,i)=>(
-                    <span key={r.subject} style={{display:"inline-flex",alignItems:"center",gap:6}}>
-                      {i>0&&<span style={{color:`${T.muted}28`,fontSize:10}}>→</span>}
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:i===0?T.gold:`${T.muted}75`,fontWeight:i===0?700:400}}>{r.subject}</span>
-                    </span>
-                  ))}
                 </div>
               )}
             </>

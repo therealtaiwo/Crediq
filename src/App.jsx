@@ -2019,7 +2019,7 @@ function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfi
     <aside className="cq-sidebar">
       {/* Logo */}
       <div style={{padding:"0 24px 28px"}}>
-        <Logo size={22} onDark={dark}/>
+        <Logo size={22} onDark={true}/>
         <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginTop:4}}>JUPEB 2026 PREP</div>
       </div>
 
@@ -2876,8 +2876,13 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   }),[history,userSubjects]);
 
   // ── SCORE BLOCKERS per subject — current/target/cost for home screen ──────
+  // Iterate every subject with real history, not just the user's 3 chosen
+  // onboarding subjects — Mixed-mode practice can reveal weak topics in
+  // subjects outside that list, and those were being silently dropped.
   const blockersBySubject=useMemo(()=>{
-    return userSubjects.map(sub=>{
+    const subjectsWithHistory=[...new Set(history.filter(isRealSession).map(h=>h.subject))];
+    const allSubjects=[...new Set([...userSubjects,...subjectsWithHistory])];
+    return allSubjects.map(sub=>{
       const subH=history.filter(h=>h.subject===sub);
       if(!subH.length)return{subject:sub,blockers:[]};
       const topicData={};
@@ -3080,7 +3085,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
       <div style={{padding:"14px 20px 10px",borderBottom:`1px solid ${T.navBorder}`,background:T.navBg,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div>
           <motion.div initial={{opacity:0}} animate={{opacity:1}} transition={{duration:0.3}}>
-            <Logo size={20} onDark={dark}/>
+            <Logo size={20} onDark={true}/>
           </motion.div>
           <motion.div initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} transition={{duration:0.3,delay:0.2,ease:EASE}}>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}55`,letterSpacing:"0.2em",marginTop:3,marginBottom:1}}>
@@ -4016,8 +4021,8 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
           {Object.entries(q.options).sort(([a],[b])=>a.charCodeAt(0)-b.charCodeAt(0)).map(([k,v])=>{
             const selected=answers[current]===k;
             return (
-              <button key={k} onClick={()=>handleAnswer(k)} className={`btn-press${lastAnswer===k&&selected?" answer-bounce":""}`} style={{width:"100%",padding:"14px 16px",border:`1px solid ${selected?T.gold:T.border}`,borderRadius:10,background:selected?"rgba(184,151,62,0.12)":T.surface,cursor:"pointer",textAlign:"left",display:"flex",gap:12,alignItems:"flex-start",transition:"border .15s,background .15s"}}>
-                <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:selected?T.gold:T.muted,fontWeight:700,minWidth:16,paddingTop:1}}>{k}.</span>
+              <button key={k} onClick={()=>handleAnswer(k)} className={`btn-press${lastAnswer===k&&selected?" answer-bounce":""}`} style={{width:"100%",padding:"14px 16px",border:`1.5px solid ${selected?T.gold:T.muted+"55"}`,borderRadius:10,background:selected?"rgba(184,151,62,0.16)":T.surface,cursor:"pointer",textAlign:"left",display:"flex",gap:12,alignItems:"flex-start",transition:"border .15s,background .15s",boxShadow:selected?`0 0 0 1px ${T.gold}33`:"none"}}>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:selected?T.gold:T.text,fontWeight:700,minWidth:16,paddingTop:1,opacity:selected?1:0.75}}>{k}.</span>
                 <span style={{fontSize:14,color:T.text,lineHeight:1.5}}>{v}</span>
               </button>
             );
@@ -4163,8 +4168,10 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast}) {
             </div>
           ):(
             <>
-              {/* Group score blockers by subject */}
-              {userSubjects.map(sub=>{
+              {/* Group score blockers by subject — every subject with real data,
+                  not just the user's 3 chosen onboarding subjects (a topic from
+                  Mixed-mode practice can belong to a subject outside that list) */}
+              {[...new Set([...userSubjects,...weakTopicsLabeled.map(w=>w.subject).filter(Boolean)])].map(sub=>{
                 const subBlockers=weakTopicsLabeled.filter(w=>w.subject===sub);
                 if(!subBlockers.length)return null;
                 const meta=SUBJECT_META[sub]||{color:"#B8973E",icon:"BKS"};
@@ -4550,8 +4557,8 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,marginBottom:12,lineHeight:1.6}}>
               Fixing this one topic is the fastest path to your next grade letter.
             </div>
-            <button className="btn-press" onClick={()=>onDrill&&onDrill()} style={{width:"100%",padding:"13px 0",border:"none",borderRadius:9,background:"linear-gradient(135deg,rgba(249,115,22,0.85),rgba(192,57,43,0.85))",color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:"0.08em",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <Target size={14}/> FIX {wrongTopics[0].toUpperCase().slice(0,22)} NOW →
+            <button className="btn-press" onClick={()=>onDrill&&onDrill()} style={{width:"100%",padding:"11px 0",border:"none",borderRadius:8,background:"linear-gradient(135deg,rgba(249,115,22,0.85),rgba(192,57,43,0.85))",color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <Target size={12}/> FIX {wrongTopics[0].toUpperCase().slice(0,22)} NOW →
             </button>
           </div>
         )}
@@ -4583,10 +4590,10 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
         {showReview&&(
           <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:12}}>
             {(questionResults||[]).map((r,i)=>(
-              <div key={i} style={{background:T.surface,border:`1px solid ${r.correct?T.success+"33":T.danger+"33"}`,borderRadius:10,padding:"14px 16px",borderLeft:`3px solid ${r.correct?T.success:T.danger}`}}>
+              <div key={i} style={{background:r.correct?`${T.success}10`:`${T.danger}10`,border:`1px solid ${r.correct?T.success+"55":T.danger+"55"}`,borderRadius:10,padding:"14px 16px",borderLeft:`4px solid ${r.correct?T.success:T.danger}`}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>Q{i+1}{r.topic?` · ${r.topic}`:""}</span>
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:r.correct?T.success:"#f97316"}}>{r.correct?"✓ CORRECT":"Almost — see explanation below"}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,color:r.correct?T.success:T.danger}}>{r.correct?"✓ CORRECT":"✕ INCORRECT"}</span>
                 </div>
                 <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
                 {!r.correct&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6}}>You: <strong>{r.userAnswer||"—"}</strong> · Correct: <strong>{r.correctAnswer}</strong></div>}
@@ -6325,10 +6332,19 @@ function InstallButton({T}){
 
   const handleTap=async()=>{
     if(prompt){
-      prompt.prompt();
-      const{outcome}=await prompt.userChoice;
-      if(outcome==="accepted"){localStorage.setItem("cq_pwa_installed","1");setIsInstalled(true);}
-      setPrompt(null);
+      try{
+        prompt.prompt();
+        const{outcome}=await prompt.userChoice;
+        if(outcome==="accepted"){localStorage.setItem("cq_pwa_installed","1");setIsInstalled(true);}
+        setPrompt(null);
+      }catch(e){
+        // Native prompt can only be used once — if something else already
+        // consumed it, this throws silently with no visible UI change.
+        // Fall back to manual instructions instead of doing nothing.
+        console.warn("Native install prompt failed, showing manual instructions:",e);
+        setPrompt(null);
+        setHint(isIOS?"ios":"manual");
+      }
     }else if(isIOS){
       setHint("ios");
     }else{

@@ -5366,7 +5366,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[error,setError]=useState("");
   // User table
   const[search,setSearch]=useState("");
-  const[filter,setFilter]=useState("all"); // all|premium|free|never|inactive
+  const[filter,setFilter]=useState("all");
+  const[sortBy,setSortBy]=useState("joined"); // joined|sessions_high|sessions_low|last_active
   const[selectedUser,setSelectedUser]=useState(null);
   const[grantingPremium,setGrantingPremium]=useState(false);
   // Ambassador
@@ -5418,8 +5419,19 @@ function FounderDashboardScreen({onBack,T,showToast}){
         const day=new Date(u.paidAt).toLocaleDateString("en-GB",{day:"2-digit",month:"short"});
         revenueByDay[day]=(revenueByDay[day]||0)+2500;
       });
+      // ── FUNNEL ANALYTICS ──
+      const signedUp=realUsers.length;
+      const completedOnboarding=realUsers.filter(u=>u.onboarded).length;
+      const didFirstSession=realUsers.filter(u=>(u.totalSessionsCompleted||0)>=1).length;
+      const regularUsers=realUsers.filter(u=>(u.totalSessionsCompleted||0)>=3).length;
+      const premiumCount=realUsers.filter(u=>u.isPremium).length;
+      const droppedAtEmail=realUsers.filter(u=>!u.onboarded&&!u.targetUniversity).length;
+      const droppedAtOnboarding=realUsers.filter(u=>!u.onboarded&&u.targetUniversity).length;
+      const onboardedNoSession=realUsers.filter(u=>u.onboarded&&!(u.totalSessionsCompleted||0)).length;
+      const funnel={signedUp,completedOnboarding,didFirstSession,regularUsers,premiumCount,droppedAtEmail,droppedAtOnboarding,onboardedNoSession};
+
       const testAccountCount=users.length-total;
-      setStats({total,premium,conversion,activeToday,sessionsCompleted,topSchools,topWeakTopics,topHeard,totalAmbassadors,totalReferred,totalPremiumReferrals,totalPayouts,topAmbassadors,revenueByDay,totalRevenue:premium*2500,testAccountCount});
+      setStats({total,premium,conversion,activeToday,sessionsCompleted,topSchools,topWeakTopics,topHeard,totalAmbassadors,totalReferred,totalPremiumReferrals,totalPayouts,topAmbassadors,revenueByDay,totalRevenue:premium*2500,testAccountCount,funnel});
       setError("");
     }catch(e){setError(e?.message||"Check Firestore rules — founder email needs read access.");}
     finally{setLoading(false);setRefreshing(false);}
@@ -5460,8 +5472,13 @@ function FounderDashboardScreen({onBack,T,showToast}){
       const q=search.toLowerCase();
       list=list.filter(u=>(u.name||"").toLowerCase().includes(q)||(u.email||"").toLowerCase().includes(q)||(u.targetUniversity||"").toLowerCase().includes(q));
     }
-    return list.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  },[allUsers,filter,search]);
+    const sorted=[...list];
+    if(sortBy==="sessions_high")sorted.sort((a,b)=>(b.totalSessionsCompleted||0)-(a.totalSessionsCompleted||0));
+    else if(sortBy==="sessions_low")sorted.sort((a,b)=>(a.totalSessionsCompleted||0)-(b.totalSessionsCompleted||0));
+    else if(sortBy==="last_active")sorted.sort((a,b)=>{const da=a.lastActiveDate?new Date(a.lastActiveDate):new Date(0);const db2=b.lastActiveDate?new Date(b.lastActiveDate):new Date(0);return db2-da;});
+    else sorted.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    return sorted;
+  },[allUsers,filter,search,sortBy]);
 
   // Email recipient count
   useEffect(()=>{
@@ -5592,6 +5609,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
     {id:"users",label:`USERS (${allUsers.filter(u=>!u.isTestAccount).length})`},
     {id:"churn",label:"CHURN"},
     {id:"email",label:"EMAIL"},
+    {id:"export",label:"EXPORT"},
   ];
 
   return(
@@ -5657,6 +5675,55 @@ function FounderDashboardScreen({onBack,T,showToast}){
                     <RankList title="HOW STUDENTS FOUND CREDIQ" items={stats.topHeard} emptyMsg="No referral data yet"/>
                   </div>
                   <RankList title="TOP WEAK TOPICS" items={stats.topWeakTopics} emptyMsg="No session data yet"/>
+
+                  {/* ── CONVERSION FUNNEL ── */}
+                  {stats.funnel&&(
+                    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px 16px",marginBottom:12}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>CONVERSION FUNNEL — WHERE STUDENTS DROP OFF</div>
+                      {[
+                        {label:"Signed Up",value:stats.funnel.signedUp,color:"#60a5fa",note:"Created an account"},
+                        {label:"Completed Onboarding",value:stats.funnel.completedOnboarding,color:"#B8973E",note:"Selected course, school & subjects"},
+                        {label:"Did First Session",value:stats.funnel.didFirstSession,color:"#f97316",note:"Completed at least 1 practice"},
+                        {label:"Regular (3+ sessions)",value:stats.funnel.regularUsers,color:"#c084fc",note:"Practicing consistently"},
+                        {label:"Premium",value:stats.funnel.premiumCount,color:"#4ade80",note:"Paid ₦2,500"},
+                      ].map((step,i,arr)=>{
+                        const pct=arr[0].value>0?Math.round((step.value/arr[0].value)*100):0;
+                        const dropOff=i>0?arr[i-1].value-step.value:0;
+                        return(
+                          <div key={step.label} style={{marginBottom:14}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                              <div>
+                                <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:step.color,fontWeight:700}}>{step.value}</span>
+                                <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginLeft:8}}>{step.label}</span>
+                              </div>
+                              <div style={{textAlign:"right"}}>
+                                <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:step.color}}>{pct}%</span>
+                                {i>0&&dropOff>0&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#ef4444",marginLeft:8}}>-{dropOff} dropped</span>}
+                              </div>
+                            </div>
+                            <div style={{height:8,background:"rgba(255,255,255,0.05)",borderRadius:4,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${pct}%`,background:step.color,borderRadius:4,opacity:0.8}}/>
+                            </div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}55`,marginTop:3}}>{step.note}</div>
+                          </div>
+                        );
+                      })}
+                      {/* Drop-off explanations */}
+                      <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${T.border}`}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>DROP-OFF BREAKDOWN</div>
+                        {[
+                          {label:"Didn't verify email / complete signup",value:stats.funnel.droppedAtEmail,color:"#ef4444"},
+                          {label:"Started onboarding but didn't finish",value:stats.funnel.droppedAtOnboarding,color:"#f97316"},
+                          {label:"Onboarded but never practiced",value:stats.funnel.onboardedNoSession,color:"#eab308"},
+                        ].map(d=>(
+                          <div key={d.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,flex:1}}>{d.label}</div>
+                            <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:d.color,marginLeft:12,flexShrink:0}}>{d.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {/* Right: Ambassador management */}
                 <div>
@@ -5694,10 +5761,21 @@ function FounderDashboardScreen({onBack,T,showToast}){
             {/* ── USERS TAB ── */}
             {tab==="users"&&(
               <div>
-                {/* Search + filters */}
-                <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+                {/* Search */}
+                <div style={{display:"flex",gap:10,marginBottom:8,flexWrap:"wrap"}}>
                   <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, email, school…"
                     style={{flex:"1 1 200px",padding:"10px 14px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:11,outline:"none"}}/>
+                </div>
+                {/* Sort */}
+                <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+                  {[{v:"joined",l:"NEWEST FIRST"},{v:"sessions_high",l:"MOST SESSIONS ↓"},{v:"sessions_low",l:"LEAST SESSIONS ↑"},{v:"last_active",l:"LAST ACTIVE"}].map(s=>(
+                    <button key={s.v} onClick={()=>setSortBy(s.v)} style={{padding:"6px 12px",borderRadius:6,border:`1px solid ${sortBy===s.v?T.gold:T.border}`,background:sortBy===s.v?`${T.gold}12`:"transparent",color:sortBy===s.v?T.gold:T.muted,fontFamily:"'DM Mono',monospace",fontSize:8,cursor:"pointer",letterSpacing:"0.04em",flexShrink:0}}>
+                      {s.l}
+                    </button>
+                  ))}
+                </div>
+                {/* Filters */}
+                <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
                   {["all","premium","free","never","inactive","referred","no_uni","today","week","test"].map(f=>(
                     <button key={f} onClick={()=>setFilter(f)} style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${filter===f?T.gold:T.border}`,background:filter===f?`${T.gold}12`:"transparent",color:filter===f?T.gold:T.muted,fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",letterSpacing:"0.06em",flexShrink:0}}>
                       {f==="never"?"NEVER PRACTICED":f==="inactive"?"INACTIVE 3D+":f==="no_uni"?"NO UNI SET":f==="today"?"JOINED TODAY":f==="week"?"JOINED 7D":f==="test"?`TEST (${allUsers.filter(u=>u.isTestAccount).length})`:f.toUpperCase()}
@@ -5866,6 +5944,171 @@ function FounderDashboardScreen({onBack,T,showToast}){
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* ── EXPORT TAB ── */}
+            {tab==="export"&&(()=>{
+              const real=allUsers.filter(u=>!u.isTestAccount);
+              const now=new Date();
+              const daysSince=d=>{if(!d)return null;try{const t=typeof d==="string"?new Date(d):d?.toDate?.();return t?Math.floor((now-t)/(1000*60*60*24)):null;}catch{return null;}};
+              const generateExport=()=>{
+                return JSON.stringify({
+                  exportDate:now.toISOString(),
+                  exportFor:"CrediQ JUPEB Prep App — AI Marketing Analysis",
+                  instructions:"Analyze this data to help identify: (1) best email copy to convert free users, (2) what segment to target first, (3) what pain points to highlight, (4) what the drop-off reasons likely are, (5) best message timing and channel for each segment.",
+                  summary:{
+                    totalRealUsers:real.length,
+                    premiumUsers:stats.premium,
+                    conversionRate:`${stats.conversion}%`,
+                    activeToday:stats.activeToday,
+                    sessionsCompleted:stats.sessionsCompleted,
+                    totalRevenue:`₦${stats.totalRevenue.toLocaleString()}`,
+                    examDaysLeft:45,
+                    productPrice:"₦2,500 one-time no subscription",
+                  },
+                  funnel:{
+                    signedUp:real.length,
+                    completedOnboarding:real.filter(u=>u.onboarded).length,
+                    didFirstSession:real.filter(u=>(u.totalSessionsCompleted||0)>=1).length,
+                    regular3PlusSessions:real.filter(u=>(u.totalSessionsCompleted||0)>=3).length,
+                    premium:real.filter(u=>u.isPremium).length,
+                    droppedAtEmailVerification:real.filter(u=>!u.onboarded&&!u.targetUniversity).length,
+                    droppedDuringOnboarding:real.filter(u=>!u.onboarded&&u.targetUniversity).length,
+                    onboardedButNeverPracticed:real.filter(u=>u.onboarded&&!(u.totalSessionsCompleted||0)).length,
+                    note:"Students who drop at onboarding likely didnt verify email or got confused by school/subject selection",
+                  },
+                  schools:stats.topSchools.map(([s,c])=>({school:s,students:c})),
+                  howTheyFoundCrediQ:stats.topHeard.map(([s,c])=>({source:s,count:c})),
+                  topWeakTopics:stats.topWeakTopics.map(([t,c])=>({topic:t,timesWrong:c})),
+                  referrals:{
+                    totalAmbassadors:stats.totalAmbassadors,
+                    totalReferredUsers:stats.totalReferred,
+                    premiumFromReferrals:stats.totalPremiumReferrals,
+                    ambassadorPayouts:`₦${stats.totalPayouts.toLocaleString()}`,
+                    note:"Most users came from WhatsApp group shares — word of mouth is primary channel",
+                  },
+                  userSegments:{
+                    neverPracticed:real.filter(u=>!(u.totalSessionsCompleted||0)).map(u=>({
+                      name:u.name||"Unknown",school:u.targetUniversity||"Not set",
+                      course:u.course||"Not set",joinedDaysAgo:daysSince(u.createdAt),
+                      referralSource:u.referralSource||"Unknown",onboarded:u.onboarded||false,
+                    })),
+                    practicedButNotPremium:real.filter(u=>(u.totalSessionsCompleted||0)>=1&&!u.isPremium).map(u=>({
+                      name:u.name||"Unknown",school:u.targetUniversity||"Not set",
+                      course:u.course||"Not set",sessions:u.totalSessionsCompleted||0,
+                      lastActive:u.lastActiveDate||"Unknown",joinedDaysAgo:daysSince(u.createdAt),
+                      referralSource:u.referralSource||"Unknown",
+                      weakTopics:(u.weakTopics||[]).slice(0,3),subjects:u.subjects||[],
+                    })),
+                    premium:real.filter(u=>u.isPremium).map(u=>({
+                      name:u.name||"Unknown",school:u.targetUniversity||"Not set",
+                      course:u.course||"Not set",sessions:u.totalSessionsCompleted||0,
+                      paidAt:u.paidAt||"Unknown",joinedDaysAgo:daysSince(u.createdAt),
+                      referralSource:u.referralSource||"Unknown",
+                    })),
+                  },
+                  marketingContext:{
+                    examDate:"JUPEB 2026 — approximately 45 days away",
+                    productType:"One-time ₦2,500 payment. No subscription. Access until after last exam.",
+                    uniqueValue:"Shows exact weak topics per subject + targeted drills to fix them",
+                    freeVsPremium:"Free = see your score gaps. Premium = fix them with unlimited targeted drills.",
+                    primaryChannel:"WhatsApp groups (most users found CrediQ this way)",
+                    userDemographic:"JUPEB students in Nigeria aged 16-22, preparing for university entrance",
+                    urgencyHook:"45 days to exam. Students who know their weak topics and fix them score higher.",
+                  },
+                  suggestedEmailAngles:[
+                    "You know your weak topics. Here is why not fixing them will cost you in the exam hall.",
+                    "₦2,500 or retake JUPEB next year? Do the math.",
+                    "The students scoring highest are not studying everything — they are fixing the right things.",
+                    "You found your gaps for free. 45 days left. Premium fixes them.",
+                    `${real.filter(u=>(u.totalSessionsCompleted||0)>=3&&!u.isPremium).length} students have practiced 3+ times on free. They know their gaps. Most have not fixed them yet.`,
+                  ],
+                },null,2);
+              };
+
+              const copyExport=()=>{
+                const json=generateExport();
+                navigator.clipboard?.writeText(json)
+                  .then(()=>showToast?.("Full export copied — paste into Claude or ChatGPT 🔥","success"))
+                  .catch(()=>showToast?.("Couldn't copy — try download instead","error"));
+              };
+
+              const downloadExport=()=>{
+                const json=generateExport();
+                const blob=new Blob([json],{type:"application/json"});
+                const url=URL.createObjectURL(blob);
+                const a=document.createElement("a");
+                a.href=url;a.download=`crediq-data-${now.toISOString().split("T")[0]}.json`;
+                a.click();URL.revokeObjectURL(url);
+                showToast?.("Download started","success");
+              };
+
+              const copyCSV=()=>{
+                const csv=["Name,Email,School,Course,Sessions,Premium,Joined,Source"]
+                  .concat(real.filter(u=>u.email).map(u=>[
+                    `"${(u.name||"").replace(/"/g,"")}"`,u.email,
+                    u.targetUniversity||"",`"${(u.course||"").replace(/"/g,"")}"`,
+                    u.totalSessionsCompleted||0,u.isPremium?"YES":"NO",
+                    u.createdAt?.toDate?.()?.toLocaleDateString("en-GB")||"",
+                    u.referralSource||"",
+                  ].join(","))).join("\n");
+                navigator.clipboard?.writeText(csv)
+                  .then(()=>showToast?.(`${real.filter(u=>u.email).length} users copied as CSV ✓`,"success"))
+                  .catch(()=>showToast?.("Couldn't copy","error"));
+              };
+
+              return(
+                <div style={{maxWidth:640}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>EXPORT DATA FOR AI ANALYSIS</div>
+
+                  <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:12}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:8}}>FULL AI ANALYSIS PACK</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.8,marginBottom:16}}>
+                      Complete JSON with funnel data, user segments, weak topics, schools, referral sources, marketing context and suggested email angles. Paste directly into Claude or ChatGPT.
+                    </div>
+                    <div style={{display:"flex",gap:10}}>
+                      <button onClick={copyExport} className="btn-press" style={{flex:1,padding:"13px 0",border:`1px solid ${T.gold}40`,borderRadius:8,background:`${T.gold}10`,color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
+                        COPY FOR AI →
+                      </button>
+                      <button onClick={downloadExport} className="btn-press" style={{flex:1,padding:"13px 0",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer",letterSpacing:"0.06em"}}>
+                        DOWNLOAD .JSON
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:12}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",letterSpacing:"0.12em",marginBottom:8}}>USER LIST — CSV FORMAT</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.8,marginBottom:16}}>
+                      Name, email, school, sessions, premium. Paste into spreadsheet or AI for personalised outreach writing.
+                    </div>
+                    <button onClick={copyCSV} className="btn-press" style={{width:"100%",padding:"13px 0",border:"1px solid rgba(96,165,250,0.3)",borderRadius:8,background:"rgba(96,165,250,0.08)",color:"#60a5fa",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
+                      COPY {real.filter(u=>u.email).length} USERS AS CSV
+                    </button>
+                  </div>
+
+                  <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:12}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#c084fc",letterSpacing:"0.12em",marginBottom:12}}>READY-MADE AI PROMPTS — TAP TO COPY</div>
+                    {[
+                      "Analyze this CrediQ user data and write 3 WhatsApp messages to convert free users to premium. Keep it sounding like a fellow student, not a marketer. Use Nigerian student language.",
+                      "Based on this funnel data, what is the single highest-impact thing I should fix to improve my conversion rate from free to premium?",
+                      "Write a personalized email for students who have done 3+ sessions but haven't paid. Reference their situation specifically — they know their gaps but haven't fixed them.",
+                      "What does the drop-off data tell us about where CrediQ is losing people and what should I fix in the product or onboarding?",
+                      "Based on the weak topics and school data, write a targeted WhatsApp message for UNILAG students. Make it feel personal and urgent given 45 days to exam.",
+                      "Segment these users and tell me which group I should focus my outreach on first for maximum premium conversions this week.",
+                    ].map((prompt,i)=>(
+                      <div key={i} onClick={()=>{navigator.clipboard?.writeText(prompt);showToast?.("Prompt copied — paste into Claude or ChatGPT","success");}}
+                        className="btn-press" style={{padding:"10px 12px",marginBottom:8,background:"rgba(192,132,252,0.06)",border:"1px solid rgba(192,132,252,0.15)",borderRadius:8,cursor:"pointer"}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#c084fc",marginBottom:3,letterSpacing:"0.1em"}}>PROMPT {i+1} — TAP TO COPY</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.7}}>{prompt}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}45`,textAlign:"center",lineHeight:1.8}}>
+                    DATA IS LIVE FROM FIRESTORE · FOUNDER ACCESS ONLY · NEVER SHARED EXTERNALLY
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}40`,textAlign:"center",margin:"24px 0",lineHeight:1.8,letterSpacing:"0.08em"}}>
               LIVE FROM FIRESTORE · ONLY VISIBLE TO FOUNDER ACCOUNT

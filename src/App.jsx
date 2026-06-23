@@ -352,10 +352,10 @@ function labelWithCourse(subject,topic){
 }
 
 const COURSE_GROUPS = {
-  "Sciences":        { courses:["Medicine / Surgery","Pharmacy","Nursing","Engineering","Computer Science","Architecture"], subjects:["Physics","Chemistry","Biology","Mathematics"] },
-  "Humanities":      { courses:["Law","Mass Communication"], subjects:["Government","Literature in English","CRS","Geography"] },
-  "Social Sciences": { courses:["Accounting","Economics"], subjects:["Economics","Accounting","Government","Business Studies"] },
-  "Arts & Languages":{ courses:["Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education"], subjects:["History","French","Islamic Religious Studies","Music","Visual Arts","Yoruba","Igbo"] },
+  "Sciences":        { courses:["Medicine / Surgery","Pharmacy","Nursing","Engineering","Computer Science","Architecture"], subjects:["Physics","Chemistry","Biology","Mathematics","Agricultural Science","Geography","Economics"] },
+  "Humanities":      { courses:["Law","Mass Communication"], subjects:["Government","Literature in English","CRS","Geography","Economics","Agricultural Science","Biology","Mathematics","French","Yoruba","Igbo"] },
+  "Social Sciences": { courses:["Accounting","Economics"], subjects:["Economics","Accounting","Government","Business Studies","Geography","Literature in English","Mathematics","CRS","Agricultural Science"] },
+  "Arts & Languages":{ courses:["Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education"], subjects:["History","French","Islamic Religious Studies","Music","Visual Arts","Yoruba","Igbo","Government","Literature in English","CRS","Economics"] },
 };
 const ALL_COURSES = ["Medicine / Surgery","Law","Engineering","Computer Science","Pharmacy","Architecture","Accounting","Economics","Mass Communication","Nursing","Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education","Other"];
 const HEARD_OPTIONS = ["Friend","WhatsApp group","School","TikTok","X","Other"];
@@ -3799,7 +3799,26 @@ function ScientificCalc({T,onClose}){
   const[expr,setExpr]=useState("");
   const[justEvaled,setJustEvaled]=useState(false);
   const[deg,setDeg]=useState(true);
+  const[minimized,setMinimized]=useState(false);
+  const[dragY,setDragY]=useState(0);
+  const dragRef=useRef(null);
+  const startY=useRef(0);
+  const startDragY=useRef(0);
+
   const toRad=v=>deg?v*(Math.PI/180):v;
+
+  // Touch drag handler — drag the calc up/down to reposition
+  const onTouchStart=e=>{
+    startY.current=e.touches[0].clientY;
+    startDragY.current=dragY;
+  };
+  const onTouchMove=e=>{
+    const delta=e.touches[0].clientY-startY.current;
+    // Allow dragging up (negative) to expose more of the question
+    // Cap: can't drag below 0 (bottom) or more than 300px up
+    const newY=Math.min(0,Math.max(-320,startDragY.current+delta));
+    setDragY(newY);
+  };
 
   const press=btn=>{
     if(btn==="AC"){setDisplay("0");setExpr("");setJustEvaled(false);return;}
@@ -3830,58 +3849,81 @@ function ScientificCalc({T,onClose}){
     if(justEvaled&&!["÷","×","-","+","^"].includes(btn)){setDisplay(btn);setExpr(btn);setJustEvaled(false);return;}
     setJustEvaled(false);
     const sym={"sin(":"sin(","cos(":"cos(","tan(":"tan(","log(":"log(","ln(":"ln(","√(":"√(","π":"π","e":"e","x²":"^2"}[btn]??btn;
-    setDisplay(["÷","×","-","+","^","("].includes(sym)?sym:display===("0")&&/\d/.test(sym)?sym:display+sym);
+    setDisplay(["÷","×","-","+","^","("].includes(sym)?sym:display==="0"&&/\d/.test(sym)?sym:display+sym);
     setExpr(e=>e+sym);
   };
 
   const Btn=({label,span=1,color,bg,accent})=>(
     <button onClick={()=>press(label)} style={{
-      gridColumn:`span ${span}`,padding:"16px 0",minHeight:52,
+      gridColumn:`span ${span}`,padding:"13px 0",minHeight:46,
       border:accent?`1px solid rgba(184,151,62,0.28)`:`1px solid ${T.border}`,
-      borderRadius:10,cursor:"pointer",
+      borderRadius:8,cursor:"pointer",
       background:bg||(accent?"rgba(184,151,62,0.1)":T.surface),
       color:color||T.text,
       fontFamily:"'DM Mono',monospace",
-      fontSize:label.length>3?11:15,fontWeight:600,
-      transition:"opacity 0.1s"
+      fontSize:label.length>3?10:14,fontWeight:600,
     }}>{label}</button>
   );
 
   return(
-    <div style={{position:"fixed",inset:0,zIndex:700,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,0.72)",backdropFilter:"blur(4px)"}}
-      onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <motion.div initial={{y:420,opacity:0}} animate={{y:0,opacity:1}} exit={{y:420,opacity:0}} transition={{type:"spring",stiffness:280,damping:28}}
-        style={{width:"100%",maxWidth:480,background:T.bg,borderRadius:"20px 20px 0 0",boxShadow:"0 -20px 60px rgba(0,0,0,0.5)",paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
-        {/* Handle */}
-        <div style={{display:"flex",justifyContent:"center",padding:"10px 0 2px"}}>
-          <div style={{width:36,height:4,borderRadius:2,background:`${T.muted}28`}}/>
+    /* No full-screen backdrop — floats over the question */
+    <div ref={dragRef} style={{
+      position:"fixed",bottom:64,left:0,right:0,zIndex:700,
+      transform:`translateY(${dragY}px)`,
+      transition:"transform 0.05s",
+      touchAction:"none",
+    }}>
+      <div style={{
+        maxWidth:480,margin:"0 auto",
+        background:`${T.bg}F2`, // 95% opaque so question bleeds through slightly
+        borderRadius:"16px 16px 0 0",
+        boxShadow:"0 -8px 40px rgba(0,0,0,0.6)",
+        border:`1px solid ${T.border}`,
+        borderBottom:"none",
+        backdropFilter:"blur(12px)",
+        WebkitBackdropFilter:"blur(12px)",
+      }}>
+        {/* Drag handle — touch here to drag */}
+        <div
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"10px 0 6px",cursor:"grab",touchAction:"none"}}>
+          <div style={{width:40,height:4,borderRadius:2,background:`${T.muted}35`}}/>
         </div>
+
         {/* Topbar */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 16px 8px"}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}55`,letterSpacing:"0.18em"}}>SCIENTIFIC CALCULATOR</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 14px 8px"}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}55`,letterSpacing:"0.18em"}}>🧮 CALCULATOR</div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <button onClick={()=>setDeg(d=>!d)} style={{fontFamily:"'DM Mono',monospace",fontSize:9,padding:"4px 10px",border:`1px solid ${T.border}`,borderRadius:12,background:deg?"rgba(184,151,62,0.12)":"transparent",color:deg?T.gold:T.muted,cursor:"pointer"}}>{deg?"DEG":"RAD"}</button>
-            <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:4}}>✕</button>
+            <button onClick={()=>setMinimized(m=>!m)} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,color:T.muted,cursor:"pointer",fontSize:12,padding:"4px 10px",fontFamily:"'DM Mono',monospace"}}>
+              {minimized?"EXPAND":"MINIMISE"}
+            </button>
+            <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:4}}>✕</button>
           </div>
         </div>
-        {/* Display */}
-        <div style={{margin:"0 14px 10px",padding:"10px 16px 12px",background:"rgba(0,0,0,0.25)",borderRadius:12,border:`1px solid ${T.border}`,textAlign:"right"}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:`${T.muted}45`,minHeight:16,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{expr||"‎"}</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:38,fontWeight:700,color:T.text,lineHeight:1.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{display}</div>
+
+        {/* Display — always visible even when minimized */}
+        <div style={{margin:"0 12px 8px",padding:"8px 14px 10px",background:"rgba(0,0,0,0.25)",borderRadius:10,border:`1px solid ${T.border}`,textAlign:"right"}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}45`,minHeight:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{expr||"‎"}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:32,fontWeight:700,color:T.text,lineHeight:1.1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{display}</div>
         </div>
-        {/* Keys */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:7,padding:"0 14px 16px"}}>
-          <Btn label="sin(" accent/><Btn label="cos(" accent/><Btn label="tan(" accent/><Btn label="π" accent/>
-          <Btn label="log(" accent/><Btn label="ln(" accent/><Btn label="√(" accent/><Btn label="^" accent/>
-          <Btn label="x²" accent/><Btn label="e" accent/><Btn label="(" accent/><Btn label=")" accent/>
-          <Btn label="AC" color={T.danger}/><Btn label="±"/><Btn label="%"/><Btn label="÷" color={T.gold}/>
-          <Btn label="7"/><Btn label="8"/><Btn label="9"/><Btn label="×" color={T.gold}/>
-          <Btn label="4"/><Btn label="5"/><Btn label="6"/><Btn label="-" color={T.gold}/>
-          <Btn label="1"/><Btn label="2"/><Btn label="3"/><Btn label="+" color={T.gold}/>
-          <Btn label="⌫"/><Btn label="0"/><Btn label="."/>
-          <Btn label="=" bg="linear-gradient(135deg,#004B3B,#8A6A1E)" color="#F7F3EC"/>
-        </div>
-      </motion.div>
+
+        {/* Keys — hidden when minimized */}
+        {!minimized&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,padding:"0 12px 12px"}}>
+            <Btn label="sin(" accent/><Btn label="cos(" accent/><Btn label="tan(" accent/><Btn label="π" accent/>
+            <Btn label="log(" accent/><Btn label="ln(" accent/><Btn label="√(" accent/><Btn label="^" accent/>
+            <Btn label="x²" accent/><Btn label="e" accent/><Btn label="(" accent/><Btn label=")" accent/>
+            <Btn label="AC" color={T.danger}/><Btn label="±"/><Btn label="%"/><Btn label="÷" color={T.gold}/>
+            <Btn label="7"/><Btn label="8"/><Btn label="9"/><Btn label="×" color={T.gold}/>
+            <Btn label="4"/><Btn label="5"/><Btn label="6"/><Btn label="-" color={T.gold}/>
+            <Btn label="1"/><Btn label="2"/><Btn label="3"/><Btn label="+" color={T.gold}/>
+            <Btn label="⌫"/><Btn label="0"/><Btn label="."/>
+            <Btn label="=" bg="linear-gradient(135deg,#004B3B,#8A6A1E)" color="#F7F3EC"/>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

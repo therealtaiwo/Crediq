@@ -946,6 +946,36 @@ const Session = {
   clear() { localStorage.removeItem("cq_session_id"); }
 };
 
+// ─── DRILL CAP — free users get 5 drill sessions per week ────────────────────
+const DrillCap={
+  KEY:"cq_drill_week_",
+  getMonday(){
+    const d=new Date();d.setHours(0,0,0,0);
+    const day=d.getDay();
+    d.setDate(d.getDate()-(day===0?6:day-1));
+    return d.toDateString();
+  },
+  get(uid){
+    try{
+      const raw=localStorage.getItem(this.KEY+uid);
+      if(!raw)return{count:0,week:this.getMonday()};
+      const data=JSON.parse(raw);
+      if(data.week!==this.getMonday())return{count:0,week:this.getMonday()};
+      return data;
+    }catch{return{count:0,week:this.getMonday()};}
+  },
+  increment(uid){
+    const data=this.get(uid);
+    const updated={count:data.count+1,week:this.getMonday()};
+    try{localStorage.setItem(this.KEY+uid,JSON.stringify(updated));}catch{}
+    return updated.count;
+  },
+  check(uid){
+    const data=this.get(uid);
+    return{used:data.count,remaining:Math.max(0,5-data.count),allowed:data.count<5};
+  }
+};
+
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const getFuture = c => FUTURES[c]||"Graduate";
 const getGreet = () => { const h=new Date().getHours(); if(h>=22||h<4)return"Still at it,"; return h<12?"Good morning":h<17?"Good afternoon":"Good evening"; };
@@ -1180,6 +1210,126 @@ function findGradeLimiter(history,subject) {
   return null;
 }
 
+// ─── CREDIQ INTELLIGENCE ENGINE ───────────────────────────────────────────────
+// Produces a 0-100 Readiness Score, risk level, and target probability
+// from existing session history — no AI needed.
+function calcReadinessScore(history, user, daysLeft=45) {
+  const clean=history.filter(isRealSession);
+  if(!clean.length)return{score:0,risk:"CRITICAL",probability:5,avgAccuracy:0,
+    consistencyScore:0,improvementScore:50,coverageScore:0,sessionsThisWeek:0,
+    totalSessions:0,improvementTrend:"stable"};
+
+  // 1. Recent accuracy (last 5 sessions, weighted heavily)
+  const sorted=[...clean].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const recent=sorted.slice(0,5);
+  const avgAccuracy=recent.reduce((s,h)=>s+(h.pct||0),0)/recent.length;
+
+  // 2. Consistency — sessions in last 7 days vs target of 5
+  const now=Date.now();
+  const last7=clean.filter(h=>(now-new Date(h.date))/(1000*60*60*24)<=7);
+  const consistencyScore=Math.min(100,(last7.length/5)*100);
+
+  // 3. Improvement trend — compare recent half vs older half
+  const half=Math.max(1,Math.floor(sorted.length/2));
+  const recentHalf=sorted.slice(0,half);
+  const olderHalf=sorted.slice(half);
+  const recentAvg=recentHalf.reduce((s,h)=>s+(h.pct||0),0)/recentHalf.length;
+  const olderAvg=olderHalf.length?olderHalf.reduce((s,h)=>s+(h.pct||0),0)/olderHalf.length:recentAvg;
+  const improvementScore=Math.min(100,Math.max(0,50+(recentAvg-olderAvg)));
+
+  // 4. Coverage — subjects practiced vs subjects enrolled
+  const userSubjects=user?.subjects||[];
+  const practicedSubjects=[...new Set(clean.map(h=>h.subject).filter(Boolean))];
+  const coverageScore=userSubjects.length?(practicedSubjects.length/userSubjects.length)*100:50;
+
+  // 5. Days pressure factor (less time = lower effective score)
+  const daysFactor=Math.max(0.70,Math.min(1,daysLeft/60));
+
+  // Weighted composite
+  const raw=(avgAccuracy*0.40+consistencyScore*0.25+improvementScore*0.20+coverageScore*0.15)*daysFactor;
+  const score=Math.round(Math.min(100,Math.max(0,raw)));
+
+  // Risk levels
+  const risk=score>=75?"LOW":score>=50?"MODERATE":score>=28?"HIGH":"CRITICAL";
+
+  // Probability of reaching target cut-off
+  const requiredPoints=user?.requiredPoints||13;
+  const rawProb=Math.min(97,Math.max(3,(score/100)*90+(score>70?8:0)-(requiredPoints>15?10:0)));
+  const probability=Math.round(rawProb);
+
+  return{
+    score,risk,probability,
+    avgAccuracy:Math.round(avgAccuracy),
+    consistencyScore:Math.round(consistencyScore),
+    improvementScore:Math.round(improvementScore),
+    coverageScore:Math.round(coverageScore),
+    sessionsThisWeek:last7.length,totalSessions:clean.length,
+    improvementTrend:recentAvg>olderAvg+2?"up":recentAvg<olderAvg-2?"down":"stable",
+    daysLeft,
+  };
+}
+
+// Rule-based personalized actions — no AI, purely from data
+function calcNextActions(history, user, readiness) {
+  const actions=[];
+  const weakTopics=calcWeakTopics(history);
+  const userSubjects=user?.subjects||[];
+  const lastSession=history.length?history[history.length-1]:null;
+  const daysSinceLast=lastSession
+    ?Math.floor((Date.now()-new Date(lastSession.date))/(1000*60*60*24)):999;
+
+  if(daysSinceLast>=3&&daysSinceLast<999)
+    actions.push({priority:"urgent",icon:"🔥",
+      text:`${daysSinceLast} day${daysSinceLast===1?"":"s"} since your last session. One session now keeps your momentum going.`,
+      cta:"Practice Now",action:"practice"});
+
+  if(weakTopics.length>0)
+    actions.push({priority:"high",icon:"🎯",
+      text:`"${weakTopics[0]}" keeps showing up in your wrong answers. Drill it and close the gap.`,
+      cta:"Drill It",action:"drill"});
+
+  if(readiness.consistencyScore<40)
+    actions.push({priority:"high",icon:"📅",
+      text:`You're averaging ${readiness.sessionsThisWeek}/5 sessions this week. Consistency matters more than cramming at this stage.`,
+      cta:"Practice Now",action:"practice"});
+
+  const unpracticed=userSubjects.filter(s=>!history.some(h=>h.subject===s));
+  if(unpracticed.length)
+    actions.push({priority:"medium",icon:"📚",
+      text:`You haven't touched ${unpracticed[0]} yet. Blank subjects are exam-day surprises.`,
+      cta:"Start Now",action:"practice"});
+
+  if(readiness.improvementTrend==="down")
+    actions.push({priority:"medium",icon:"📉",
+      text:"Your accuracy has dropped in recent sessions. Slow down — review before taking more practice tests.",
+      cta:"Review Topics",action:"review"});
+
+  if(readiness.score>=75&&actions.length===0)
+    actions.push({priority:"positive",icon:"✅",
+      text:`You're reading ${readiness.probability}% likely to hit your target. Maintain this pace — ${45-readiness.daysLeft+45} days of consistency wins exams.`,
+      cta:"Keep Going",action:"practice"});
+
+  return actions.slice(0,3);
+}
+
+// User segmentation for Founder War Room
+function segmentUsers(users) {
+  const now=Date.now();
+  const daysSince=u=>{
+    const d=u.lastActiveDate||u.createdAt?.toDate?.()?.toISOString();
+    if(!d)return 999;
+    try{return Math.floor((now-new Date(d))/86400000);}catch{return 999;}
+  };
+  const real=users.filter(u=>!u.isTestAccount);
+  return{
+    likelyToPay:real.filter(u=>!u.isPremium&&(u.totalSessionsCompleted||0)>=3&&daysSince(u)<=7),
+    highlyEngaged:real.filter(u=>!u.isPremium&&(u.totalSessionsCompleted||0)>=5),
+    inactive:real.filter(u=>!u.isPremium&&(u.totalSessionsCompleted||0)===0&&daysSince(u)>=7),
+    stuckOnboarding:real.filter(u=>!u.onboarded),
+    needsReactivation:real.filter(u=>u.onboarded&&(u.totalSessionsCompleted||0)>=1&&daysSince(u)>=7&&!u.isPremium),
+  };
+}
+
 // ─── PENDING SESSIONS — offline backup ────────────────────────────────────────
 // Saves session to localStorage before Firestore write.
 // If write fails (bad network), data survives and syncs on next load.
@@ -1269,7 +1419,7 @@ const creditReferralSignup = async (rawCode,newUserUid,newUserName)=>{
 const createUserDoc = async (uid,{name,email,referredBy=null}) => {
   const referralCode=makeRef(uid);
   const data={uid,name,email,course:null,subjects:[],onboarded:false,isPremium:false,questionsToday:0,lastActiveDate:new Date().toDateString(),referralCode,referredBy,referralCount:0,referralBalance:0,weakTopics:[],streak:0,createdAt:serverTimestamp(),
-    gradeHistory:[],averageGrade:null,totalSessionsCompleted:0,studyPattern:null,consistencyScore:0,lastSessionDate:null,strongTopics:[],masteryScores:{},examCentreRegion:null,
+    gradeHistory:[],averageGrade:null,totalSessionsCompleted:0,studyPattern:null,consistencyScore:0,lastSessionDate:null,strongTopics:[],masteryScores:{},examCentreRegion:null,userRole:"student",
   };
   // These two are required — await them
   await setDoc(doc(db,"users",uid),data);
@@ -2338,6 +2488,7 @@ function AuthScreen({onAuth,dark,setDark,T}) {
           referredBy,
           createdAt:serverTimestamp(),
           profileEdits:0,
+          userRole:"student",
         };
         await setDoc(doc(db,"users",fbUser.uid),newUser);
         if(referredBy)localStorage.removeItem("cq_ref");
@@ -2547,6 +2698,7 @@ function OnboardScreen({user,onDone,dark,setDark,T}){
   const[refCode,setRefCode]=useState("");
   const[refStatus,setRefStatus]=useState(null);
   const[howHeard,setHowHeard]=useState("");
+  const[whatsapp,setWhatsapp]=useState("");
   const[saveError,setSaveError]=useState("");
   const groupForCourse=c=>{for(const[g,cfg]of Object.entries(COURSE_GROUPS))if(cfg.courses.includes(c))return g;return null;};
   const toggle=s=>{if(subjects.includes(s))setSubjects(subjects.filter(x=>x!==s));else if(subjects.length<3)setSubjects([...subjects,s]);};
@@ -2578,7 +2730,8 @@ function OnboardScreen({user,onDone,dark,setDark,T}){
       }
       const requiredPoints=targetUni?getRequiredPoints(targetUni,course):parseInt(localStorage.getItem("cq_target_pts")||"13");
       const up={...user,course,group,subjects,onboarded:true,targetPoints:requiredPoints,targetUniversity:targetUni,requiredPoints,referralSource:howHeard,referredBy:resolvedRef||user.referredBy||null};
-      await updateDoc(doc(db,"users",user.uid),{course,group,subjects,onboarded:true,targetPoints:requiredPoints,targetUniversity:targetUni,requiredPoints,referralSource:howHeard,...(resolvedRef?{referredBy:resolvedRef}:{})});
+      const waFmt=whatsapp.trim()?(()=>{const d=whatsapp.replace(/\D/g,"");return d.startsWith("234")?"+"+d:d.startsWith("0")?"+234"+d.slice(1):d.length===10?"+234"+d:"+"+d;})():null;
+      await updateDoc(doc(db,"users",user.uid),{course,group,subjects,onboarded:true,targetPoints:requiredPoints,targetUniversity:targetUni,requiredPoints,referralSource:howHeard,...(resolvedRef?{referredBy:resolvedRef}:{}),...(waFmt?{whatsapp:waFmt}:{})});
       track("onboard_complete",{uid:user.uid,course,targetUniversity:targetUni,subjects});
       onDone(up);
     }catch(e){
@@ -2846,6 +2999,14 @@ function OnboardScreen({user,onDone,dark,setDark,T}){
                 })}
               </div>
             </div>
+
+            {/* WhatsApp number — optional, collected for updates + alerts */}
+            <div style={{marginTop:14,padding:"14px 16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:4}}>WHATSAPP NUMBER <span style={{color:`${T.muted}55`}}>(OPTIONAL)</span></div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}55`,marginBottom:10,lineHeight:1.7}}>Get exam alerts, weekly updates, and your study reminders directly on WhatsApp.</div>
+              <input value={whatsapp} onChange={e=>setWhatsapp(e.target.value)} type="tel" placeholder="e.g. 08012345678"
+                style={{width:"100%",background:"rgba(255,255,255,0.04)",border:`1px solid ${T.border}`,borderRadius:8,padding:"11px 14px",fontSize:14,color:T.text,outline:"none",fontFamily:"'DM Mono',monospace",boxSizing:"border-box"}}/>
+            </div>
           </>
         )}
 
@@ -2865,8 +3026,227 @@ function OnboardScreen({user,onDone,dark,setDark,T}){
 }
 
 
+// ─── INTELLIGENCE SCREEN ─────────────────────────────────────────────────────
+function IntelligenceScreen({user,history,onBack,onNav,T}){
+  const daysLeft=daysUntil("2026-08-03");
+  const intel=calcReadinessScore(history,user,daysLeft);
+  const actions=calcNextActions(history,user,intel);
+  const weakTopics=calcWeakTopics(history);
+  const subjectStats=calcSubjectStats(history);
+  const riskColor=intel.risk==="LOW"?"#4ade80":intel.risk==="MODERATE"?"#f97316":intel.risk==="HIGH"?"#ef4444":"#dc2626";
+  const riskEmoji=intel.risk==="LOW"?"🟢":intel.risk==="MODERATE"?"🟡":intel.risk==="HIGH"?"🔴":"⛔";
+
+  const scoreRing=(score,size=90,stroke=7)=>{
+    const r=(size-stroke)/2,circ=2*Math.PI*r;
+    const dash=(score/100)*circ;
+    const color=score>=75?"#4ade80":score>=50?"#f97316":score>=28?"#ef4444":"#dc2626";
+    return(
+      <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={stroke}/>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"/>
+      </svg>
+    );
+  };
+
+  return(
+    <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
+      <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+          <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
+        </div>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>Your Intelligence Report</div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginTop:3}}>{daysLeft} days to JUPEB 2026 · updated after every session</div>
+      </div>
+
+      <div style={{padding:"20px",maxWidth:520,margin:"0 auto",width:"100%"}}>
+
+        {/* Score hero */}
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:"24px",textAlign:"center",marginBottom:14,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"relative",display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
+            {scoreRing(intel.score,120,10)}
+            <div style={{position:"absolute",textAlign:"center"}}>
+              <div style={{fontFamily:"'Playfair Display',serif",fontSize:32,fontWeight:900,color:"#F7F3EC",lineHeight:1}}>{intel.score}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginTop:2}}>/ 100</div>
+            </div>
+          </div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700,color:"#F7F3EC",marginBottom:6}}>CrediQ Readiness Score</div>
+          <div style={{display:"inline-flex",alignItems:"center",gap:6,background:`${riskColor}12`,border:`1px solid ${riskColor}35`,borderRadius:20,padding:"5px 14px",marginBottom:8}}>
+            <span>{riskEmoji}</span>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:riskColor,fontWeight:700,letterSpacing:"0.12em"}}>{intel.risk} RISK</span>
+          </div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted}}>
+            You have a <span style={{color:"#F7F3EC",fontWeight:600}}>{intel.probability}%</span> probability of reaching your {user?.targetUniversity||"target"} cut-off
+          </div>
+        </div>
+
+        {/* Score breakdown */}
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:14}}>SCORE BREAKDOWN</div>
+          {[
+            {label:"Accuracy",desc:"Average score in recent sessions",val:intel.avgAccuracy,suffix:"%",weight:"40%"},
+            {label:"Consistency",desc:"Sessions per week vs target of 5",val:intel.consistencyScore,suffix:"%",weight:"25%"},
+            {label:"Improvement",desc:"How your scores are trending",val:intel.improvementScore,suffix:"%",weight:"20%"},
+            {label:"Coverage",desc:"Subjects you've practised",val:intel.coverageScore,suffix:"%",weight:"15%"},
+          ].map(m=>{
+            const color=m.val>=70?"#4ade80":m.val>=45?"#f97316":"#ef4444";
+            return(
+              <div key={m.label} style={{marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                  <div>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#F7F3EC",fontWeight:600}}>{m.label}</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginLeft:8}}>{m.desc}</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,fontSize:8}}>{m.weight} weight</span>
+                    <span style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color}}>{m.val}{m.suffix}</span>
+                  </div>
+                </div>
+                <div style={{height:5,background:"rgba(255,255,255,0.06)",borderRadius:3}}>
+                  <div style={{height:"100%",width:`${m.val}%`,background:color,borderRadius:3,transition:"width .8s"}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Subject performance */}
+        {(user?.subjects||[]).length>0&&(
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:14}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:14}}>SUBJECT PERFORMANCE</div>
+            {(user?.subjects||[]).map(sub=>{
+              const stats=subjectStats[sub];
+              if(!stats)return(
+                <div key={sub} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${T.border}`,alignItems:"center"}}>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted}}>{sub}</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(239,68,68,0.7)"}}>NOT STARTED</span>
+                </div>
+              );
+              const avg=Math.round(stats.totalPct/stats.sessions);
+              const color=avg>=60?"#4ade80":avg>=40?"#f97316":"#ef4444";
+              return(
+                <div key={sub} style={{padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#F7F3EC"}}>{sub}</span>
+                    <span style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color}}>{avg}%</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <div style={{height:4,background:"rgba(255,255,255,0.06)",borderRadius:2,flex:1,marginRight:12}}>
+                      <div style={{height:"100%",width:`${avg}%`,background:color,borderRadius:2}}/>
+                    </div>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,whiteSpace:"nowrap"}}>{stats.sessions} session{stats.sessions!==1?"s":""}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Recommended actions */}
+        {actions.length>0&&(
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:14}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:12}}>RECOMMENDED NEXT ACTIONS</div>
+            {actions.map((a,i)=>(
+              <div key={i} style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${T.border}`,borderRadius:10,
+                padding:"12px",marginBottom:8,display:"flex",gap:12,alignItems:"flex-start"}}>
+                <span style={{fontSize:18,flexShrink:0}}>{a.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.7,marginBottom:8}}>{a.text}</div>
+                  <button onClick={()=>onNav(a.action==="drill"?"drill":"setup")} className="btn-press"
+                    style={{padding:"7px 16px",border:"none",borderRadius:8,
+                      background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
+                      color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",fontWeight:700}}>
+                    {a.cta} →
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* What this means */}
+        <div style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"16px",marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:8}}>WHAT THIS MEANS FOR YOU</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.9}}>
+            {intel.risk==="LOW"&&`Strong position. ${intel.probability}% probability is solid — keep your ${intel.sessionsThisWeek} sessions/week pace and you'll walk into that exam hall confident.`}
+            {intel.risk==="MODERATE"&&`You're making progress but there are clear gaps. Fix your weak topics with targeted drills and push your weekly sessions to 5. The last ${daysLeft} days are what decides this.`}
+            {intel.risk==="HIGH"&&`This is recoverable — but only if you act now. You need focused, consistent sessions starting today. Don't waste time on subjects you already know.`}
+            {intel.risk==="CRITICAL"&&`${daysLeft} days is enough time but only with serious daily effort. Start with one session today. Come back tomorrow. Repeat.`}
+          </div>
+        </div>
+
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}50`,textAlign:"center",lineHeight:1.8}}>
+          Score updates after every session · Based on {intel.totalSessions} session{intel.totalSessions!==1?"s":""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── WHATSAPP BANNER (existing users without a number) ───────────────────────
+function WhatsAppBanner({user,T,onSaved}){
+  const[dismissed,setDismissed]=useState(()=>{
+    const last=Number(localStorage.getItem("cq_wa_dismissed")||0);
+    return Date.now()-last<48*60*60*1000;
+  });
+  const[showInput,setShowInput]=useState(false);
+  const[num,setNum]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[saved,setSaved]=useState(false);
+  if(user?.whatsapp||saved||dismissed)return null;
+  const formatWA=n=>{const d=n.replace(/\D/g,"");return d.startsWith("234")?"+"+d:d.startsWith("0")?"+234"+d.slice(1):d.length===10?"+234"+d:"+"+d;};
+  const doSave=async()=>{
+    if(!num.trim())return;
+    setSaving(true);
+    try{
+      const formatted=formatWA(num.trim());
+      await updateDoc(doc(db,"users",user.uid),{whatsapp:formatted});
+      const updated={...user,whatsapp:formatted};
+      onSaved&&onSaved(updated);
+      setSaved(true);
+    }catch{}finally{setSaving(false);}
+  };
+  const dismiss=()=>{localStorage.setItem("cq_wa_dismissed",String(Date.now()));setDismissed(true);};
+  return(
+    <motion.div initial={{opacity:0,y:-12}} animate={{opacity:1,y:0}} transition={{duration:0.35,ease:[0.16,1,0.3,1]}}
+      style={{background:"rgba(37,211,102,0.06)",border:"1px solid rgba(37,211,102,0.22)",borderRadius:12,
+        padding:"14px 16px",marginBottom:14,position:"relative"}}>
+      <button onClick={dismiss} style={{position:"absolute",top:10,right:12,background:"none",border:"none",
+        color:"rgba(247,243,236,0.22)",cursor:"pointer",fontSize:18,lineHeight:1}}>✕</button>
+      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#25D366",letterSpacing:"0.12em",marginBottom:4}}>💬 GET UPDATES ON WHATSAPP</div>
+      <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:"rgba(247,243,236,0.9)",marginBottom:5}}>
+        Stay connected to your JUPEB prep
+      </div>
+      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginBottom:10,lineHeight:1.7}}>
+        Exam alerts, weekly progress summary, and study reminders — straight to WhatsApp. No spam.
+      </div>
+      {!showInput?(
+        <button onClick={()=>setShowInput(true)}
+          style={{padding:"10px 18px",background:"#25D366",border:"none",borderRadius:8,
+            color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
+          Add My Number →
+        </button>
+      ):(
+        <div style={{display:"flex",gap:8}}>
+          <input value={num} onChange={e=>setNum(e.target.value)} type="tel" placeholder="08012345678" autoFocus
+            style={{flex:1,padding:"11px 14px",background:"rgba(255,255,255,0.06)",
+              border:"1px solid rgba(37,211,102,0.35)",borderRadius:8,color:"#F7F3EC",
+              fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}
+            onKeyDown={e=>e.key==="Enter"&&doSave()}/>
+          <button onClick={doSave} disabled={saving||!num.trim()}
+            style={{padding:"11px 16px",background:"#25D366",border:"none",borderRadius:8,
+              color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,
+              cursor:saving||!num.trim()?"not-allowed":"pointer",opacity:saving||!num.trim()?0.6:1}}>
+            {saving?"…":"Save"}
+          </button>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setDark,T,showToast,streak,onUpgrade}) {
+function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setDark,T,showToast,streak,onUpgrade,onUpdateUser}) {
   const readiness=useMemo(()=>calcReadiness(history),[history]);
   const weakTopics=useMemo(()=>calcWeakTopics(history),[history]);
   const topicStatus=useMemo(()=>calcTopicStatus(history),[history]);
@@ -3236,6 +3616,66 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
             </div>
           </motion.div>
         )}
+
+        {/* ── WHATSAPP BANNER — shown once for users without a number ── */}
+        <WhatsAppBanner user={user} T={T} onSaved={onUpdateUser}/>
+
+        {/* ── CREDIQ INTELLIGENCE CARD ── */}
+        {(()=>{
+          const daysLeft=daysUntil("2026-08-03");
+          const intel=calcReadinessScore(history,user,daysLeft);
+          const actions=calcNextActions(history,user,intel);
+          const riskColor=intel.risk==="LOW"?"#4ade80":intel.risk==="MODERATE"?"#f97316":intel.risk==="HIGH"?"#ef4444":"#dc2626";
+          const riskBg=intel.risk==="LOW"?"rgba(74,222,128,0.08)":intel.risk==="MODERATE"?"rgba(249,115,22,0.08)":intel.risk==="HIGH"?"rgba(239,68,68,0.08)":"rgba(220,38,38,0.10)";
+          const topAction=actions[0];
+          return(
+            <div className="fi1" style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:"18px",marginBottom:14,position:"relative",overflow:"hidden"}}>
+              {/* Subtle glow */}
+              <div style={{position:"absolute",top:-30,right:-30,width:120,height:120,borderRadius:"50%",background:`${riskColor}08`,pointerEvents:"none"}}/>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                <div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:4}}>CREDIQ READINESS</div>
+                  <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:38,fontWeight:900,color:"#F7F3EC",lineHeight:1}}>{intel.score}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>/100</div>
+                  </div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{background:riskBg,border:`1px solid ${riskColor}40`,borderRadius:20,padding:"4px 12px",marginBottom:6}}>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:riskColor,fontWeight:700,letterSpacing:"0.12em"}}>{intel.risk} RISK</span>
+                  </div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.6}}>
+                    <span style={{color:"#F7F3EC",fontWeight:600}}>{intel.probability}%</span> chance of<br/>hitting your cut-off
+                  </div>
+                </div>
+              </div>
+              {/* Mini metric row */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                {[
+                  {label:"ACCURACY",val:`${intel.avgAccuracy}%`},
+                  {label:"CONSISTENCY",val:`${intel.sessionsThisWeek}/wk`},
+                  {label:"COVERAGE",val:`${intel.coverageScore}%`},
+                ].map(m=>(
+                  <div key={m.label} style={{background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:"#F7F3EC"}}>{m.val}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,marginTop:2,letterSpacing:"0.08em"}}>{m.label}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Top action */}
+              {topAction&&(
+                <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <span style={{fontSize:16,flexShrink:0}}>{topAction.icon}</span>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.7,flex:1}}>{topAction.text}</div>
+                </div>
+              )}
+              <button onClick={()=>onNav("intelligence")}
+                style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",padding:0,letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:4}}>
+                FULL ANALYSIS →
+              </button>
+            </div>
+          );
+        })()}
 
         {/* ── DESKTOP 2-COLUMN GRID ── */}
         <div className={isDesktop?"cq-dash-grid":""}>
@@ -4197,7 +4637,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
 }
 
 // ─── DRILL SCREEN ─────────────────────────────────────────────────────────────
-function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast}) {
+function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUpgrade}) {
   const weakTopics=useMemo(()=>calcWeakTopics(history),[history]);
   const userSubjects=user.subjects||[];
   const [drillMode,setDrillMode]=useState("weak");
@@ -4209,6 +4649,7 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast}) {
   const [pendingDrill,setPendingDrill]=useState(null);
   const [confidence,setConfidence]=useState(null);
   const qbLoaded=Object.keys(QB).length>0;
+  const capStatus=user?.isPremium?null:DrillCap.check(user.uid);
 
   const subjectMeta=SUBJECT_META[selSub]||{color:"#B8973E",icon:"BKS"};
   const courses=JUPEB_COURSES[selSub]||[];
@@ -4234,10 +4675,18 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast}) {
     if(!qbLoaded){showToast&&showToast("Questions are still loading. Try again in a moment.","info");return;}
     if(!questions||questions.length===0){showToast&&showToast("No questions found for this selection. Try another.","info");return;}
     if(!user?.isPremium){
+      // Weekly drill cap — 5 drill sessions per week for free users
+      const cap=DrillCap.check(user.uid);
+      if(!cap.allowed){
+        showToast&&showToast("You've used all 5 free drills this week. Upgrade for unlimited.","info");
+        onUpgrade&&onUpgrade();
+        return;
+      }
       try{
         const{allowed}=await checkDailyLimit(user.uid,false);
         if(!allowed){showToast&&showToast("Daily limit reached — upgrade to Premium to keep drilling.","info");onBack();return;}
       }catch{}
+      DrillCap.increment(user.uid);
     }
     const shuffled=[...questions].sort(()=>Math.random()-0.5).slice(0,10);
     setDrillLabel(label);
@@ -4283,6 +4732,17 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast}) {
         <div style={{marginTop:14}}>
           <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>Drill Mode</div>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",letterSpacing:"0.08em",marginTop:3}}>10 questions · 15 minutes · targeted practice</div>
+          {capStatus&&(
+            <div style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:6,
+              background:capStatus.remaining>0?"rgba(184,151,62,0.1)":"rgba(192,57,43,0.1)",
+              border:`1px solid ${capStatus.remaining>0?"rgba(184,151,62,0.3)":"rgba(192,57,43,0.35)"}`,
+              borderRadius:20,padding:"3px 10px"}}>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,
+                color:capStatus.remaining>0?"rgba(184,151,62,0.8)":"#C0392B",letterSpacing:"0.1em"}}>
+                {capStatus.remaining>0?`${capStatus.remaining}/5 FREE DRILLS LEFT THIS WEEK`:"WEEKLY LIMIT REACHED — UPGRADE"}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -5265,14 +5725,23 @@ function AmbassadorScreen({user,onBack,T}) {
   const toNext=nextTier?nextTier.min-referralCount:0;
   const [refData,setRefData]=useState(null);
   const [loading,setLoading]=useState(true);
+  const [leaderboard,setLeaderboard]=useState([]);
   const referralLink=`https://credi-q.vercel.app?ref=${user?.referralCode||""}`;
 
   useEffect(()=>{
     if(!user?.referralCode)return;
+    // Load own referral data
     getDoc(doc(db,"referrals",user.referralCode)).then(snap=>{
       if(snap.exists())setRefData(snap.data());
       setLoading(false);
     }).catch(()=>setLoading(false));
+    // Load leaderboard from ambassadors collection
+    getDocs(collection(db,"ambassadors")).then(snap=>{
+      const board=snap.docs.map(d=>d.data())
+        .sort((a,b)=>(b.premiumReferrals||b.totalReferrals||0)-(a.premiumReferrals||a.totalReferrals||0))
+        .slice(0,10);
+      setLeaderboard(board);
+    }).catch(()=>{});
   },[user?.referralCode]);
 
   const signupsList=(refData?.signupsList||[]).slice().reverse();
@@ -5376,6 +5845,30 @@ function AmbassadorScreen({user,onBack,T}) {
             </div>
           ))}
         </div>
+
+        {/* Leaderboard */}
+        {leaderboard.length>0&&(
+          <div className="fi4" style={{marginBottom:16}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.1em",marginBottom:12}}>🏆 AMBASSADOR LEADERBOARD</div>
+            {leaderboard.map((amb,i)=>{
+              const isMe=amb.code===user?.referralCode;
+              const medals=["🥇","🥈","🥉"];
+              return(
+                <div key={amb.code||i} style={{background:isMe?`${T.gold}10`:T.surface,border:`1px solid ${isMe?T.gold+"40":T.border}`,borderRadius:9,padding:"11px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:900,color:i<3?["#FFD700","#C0C0C0","#CD7F32"][i]:T.muted,minWidth:28}}>{medals[i]||`#${i+1}`}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:isMe?T.gold:"#F7F3EC",fontWeight:isMe?700:400}}>{amb.name||"Ambassador"}{isMe?" (You)":""}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginTop:2}}>{amb.school||"—"}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:T.success}}>{amb.premiumReferrals||amb.totalReferrals||0}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,letterSpacing:"0.08em"}}>PREMIUM</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Tiers */}
         <div className="fi4">
@@ -5505,6 +5998,91 @@ function WhyPremiumScreen({user,onBack,onUpgrade,T}) {
   );
 }
 
+// ─── AMBASSADOR APPLICATION SCREEN ────────────────────────────────────────────
+function AmbassadorApplicationScreen({user,T,onBack,showToast}){
+  const[department,setDepartment]=useState("");
+  const[year,setYear]=useState("");
+  const[why,setWhy]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[submitted,setSubmitted]=useState(false);
+  const canSubmit=department.trim()&&year&&why.trim().length>=20;
+  const doSubmit=async()=>{
+    if(!canSubmit)return;
+    setLoading(true);
+    try{
+      await setDoc(doc(db,"ambassadorApplications",user.uid),{
+        name:user.name||"",email:user.email||"",school:user.targetUniversity||"",
+        department:department.trim(),yearLevel:year,whyMe:why.trim(),uid:user.uid,
+        status:"pending",appliedAt:serverTimestamp(),
+      });
+      setSubmitted(true);
+    }catch(e){showToast&&showToast("Couldn't submit — check connection.","error");}
+    finally{setLoading(false);}
+  };
+  if(submitted)return(
+    <div style={{minHeight:"100dvh",background:"linear-gradient(160deg,#020D08 0%,#061410 40%,#040D07 100%)",
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",textAlign:"center"}}>
+      <div style={{fontSize:48,marginBottom:16}}>🎉</div>
+      <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,fontWeight:900,color:"#F7F3EC",marginBottom:10}}>Application sent!</div>
+      <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.4)",lineHeight:1.9,marginBottom:32,maxWidth:320}}>
+        We'll review within 24 hours. If approved, your referral link activates immediately.
+      </div>
+      <button onClick={onBack} style={{padding:"13px 28px",border:"1px solid rgba(184,151,62,0.35)",borderRadius:10,
+        background:"transparent",color:"#B8973E",fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
+        ← Back to Profile
+      </button>
+    </div>
+  );
+  return(
+    <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:60}}>
+      <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+          <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
+        </div>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>Campus Ambassador</div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginTop:3}}>One per department. Tell your guys, earn your rank.</div>
+      </div>
+      <div style={{padding:"24px 20px",maxWidth:500,margin:"0 auto",width:"100%"}}>
+        <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"14px 16px",marginBottom:20}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:6}}>HOW IT WORKS</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.9}}>Apply → we review → you get your unique link → every student who joins via your link earns you ₦500 when they go Premium. No cap.</div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YOUR SCHOOL</div>
+          <div style={{padding:"12px 14px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold}}>{user.targetUniversity||"Not set — update profile first"}</div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YOUR DEPARTMENT / FACULTY <span style={{color:T.danger}}>*</span></div>
+          <input value={department} onChange={e=>setDepartment(e.target.value)} placeholder="e.g. Sciences — UNILAG Pre-Degree"
+            style={{width:"100%",padding:"12px 14px",background:T.surface,border:`1px solid ${department.trim()?T.gold:T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YEAR LEVEL <span style={{color:T.danger}}>*</span></div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {["1st Year","2nd Year","3rd Year","4th Year+"].map(y=>(
+              <button key={y} onClick={()=>setYear(y)} style={{padding:"9px 16px",border:`1px solid ${year===y?T.gold:T.border}`,borderRadius:8,background:year===y?`${T.gold}15`:"transparent",color:year===y?T.gold:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>{y}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{marginBottom:24}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:4}}>WHY SHOULD WE PICK YOU? <span style={{color:T.danger}}>*</span></div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}55`,marginBottom:8}}>Min. 20 chars · {200-why.length} remaining</div>
+          <textarea value={why} onChange={e=>setWhy(e.target.value.slice(0,200))} rows={4}
+            placeholder="Your reach — how many JUPEB classmates you can connect with, student community involvement, etc."
+            style={{width:"100%",padding:"12px 14px",background:T.surface,border:`1px solid ${why.trim().length>=20?T.gold:T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}/>
+        </div>
+        <button onClick={doSubmit} disabled={!canSubmit||loading}
+          style={{width:"100%",padding:"15px 0",border:"none",borderRadius:12,
+            background:canSubmit?"linear-gradient(135deg,#004B3B,#8A6A1E)":"rgba(255,255,255,0.06)",
+            color:canSubmit?"#F7F3EC":`${T.muted}60`,
+            fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:canSubmit?"pointer":"not-allowed"}}>
+          {loading?"Submitting…":"Submit Application →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── PROFILE SCREEN ───────────────────────────────────────────────────────────
 // ─── FOUNDER DASHBOARD ────────────────────────────────────────────────────────
 function FounderDashboardScreen({onBack,T,showToast}){
@@ -5524,6 +6102,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[newName,setNewName]=useState("");
   const[newCode,setNewCode]=useState("");
   const[creating,setCreating]=useState(false);
+  // Ambassador applications
+  const[applications,setApplications]=useState([]);
   // Email
   const[emailFilter,setEmailFilter]=useState("all");
   const[emailSubject,setEmailSubject]=useState("");
@@ -5582,6 +6162,12 @@ function FounderDashboardScreen({onBack,T,showToast}){
 
       const testAccountCount=users.length-total;
       setStats({total,premium,conversion,activeToday,sessionsCompleted,topSchools,topWeakTopics,topHeard,totalAmbassadors,totalReferred,totalPremiumReferrals,totalPayouts,topAmbassadors,revenueByDay,totalRevenue:premium*2500,testAccountCount,funnel});
+      // Load ambassador applications
+      try{
+        const appSnap=await getDocs(collection(db,"ambassadorApplications"));
+        const apps=appSnap.docs.map(d=>({uid:d.id,...d.data()}));
+        setApplications(apps.sort((a,b)=>(b.appliedAt?.seconds||0)-(a.appliedAt?.seconds||0)));
+      }catch{}
       setError("");
     }catch(e){setError(e?.message||"Check Firestore rules — founder email needs read access.");}
     finally{setLoading(false);setRefreshing(false);}
@@ -5671,6 +6257,29 @@ function FounderDashboardScreen({onBack,T,showToast}){
     }catch{showToast?.("Failed — check Firestore rules","error");}
   };
 
+  const approveApplication=async(app)=>{
+    try{
+      const code=makeRef(app.uid);
+      await setDoc(doc(db,"ambassadors",code),{
+        code,name:app.name||"",email:app.email||"",school:app.school||"",
+        department:app.department||"",uid:app.uid,
+        totalReferrals:0,earnings:0,premiumReferrals:0,createdAt:serverTimestamp()
+      });
+      await updateDoc(doc(db,"users",app.uid),{isAmbassador:true,referralCode:code});
+      await updateDoc(doc(db,"ambassadorApplications",app.uid),{status:"approved",reviewedAt:serverTimestamp()});
+      setApplications(prev=>prev.map(a=>a.uid===app.uid?{...a,status:"approved"}:a));
+      showToast?.("Ambassador approved ✓","success");
+    }catch{showToast?.("Failed — check Firestore rules","error");}
+  };
+
+  const rejectApplication=async(app)=>{
+    try{
+      await updateDoc(doc(db,"ambassadorApplications",app.uid),{status:"rejected",reviewedAt:serverTimestamp()});
+      setApplications(prev=>prev.map(a=>a.uid===app.uid?{...a,status:"rejected"}:a));
+      showToast?.("Application rejected","success");
+    }catch{showToast?.("Failed","error");}
+  };
+
   const sendEmail=async()=>{
     if(!emailSubject.trim()||!emailBody.trim()){showToast?.("Fill in subject and body","error");return;}
     const apiKey=import.meta.env.VITE_BREVO_API_KEY;
@@ -5754,12 +6363,17 @@ function FounderDashboardScreen({onBack,T,showToast}){
     </div>
   );
 
+  const pendingCount=applications.filter(a=>a.status==="pending").length;
+  const segments=useMemo(()=>allUsers.length?segmentUsers(allUsers):null,[allUsers]);
   const TABS=[
     {id:"analytics",label:"ANALYTICS"},
     {id:"users",label:`USERS (${allUsers.filter(u=>!u.isTestAccount).length})`},
+    {id:"segments",label:"SEGMENTS"},
+    {id:"intelligence",label:"INTELLIGENCE"},
     {id:"churn",label:"CHURN"},
     {id:"email",label:"EMAIL"},
     {id:"export",label:"EXPORT"},
+    {id:"applications",label:pendingCount>0?`APPLY (${pendingCount})`:"APPLY"},
   ];
 
   return(
@@ -5957,6 +6571,163 @@ function FounderDashboardScreen({onBack,T,showToast}){
                 </div>
               </div>
             )}
+
+            {/* ── SEGMENTS TAB ── */}
+            {tab==="segments"&&segments&&(()=>{
+              const segDefs=[
+                {key:"likelyToPay",label:"🎯 Likely to Pay",desc:"3+ sessions, active this week, not premium",color:"#4ade80"},
+                {key:"highlyEngaged",label:"🔥 Highly Engaged Free",desc:"5+ sessions, not premium",color:"#f97316"},
+                {key:"needsReactivation",label:"💤 Needs Reactivation",desc:"Practiced before, inactive 7+ days",color:"#a78bfa"},
+                {key:"inactive",label:"👻 Never Practiced",desc:"Onboarded, 0 sessions, 7+ days old",color:"#60a5fa"},
+                {key:"stuckOnboarding",label:"⛔ Stuck in Onboarding",desc:"Signed up but never completed setup",color:"#f43f5e"},
+              ];
+              const copySegmentCSV=(users,label)=>{
+                const csv=["Name,Email,School,Sessions,Joined"]
+                  .concat(users.filter(u=>u.email).map(u=>[
+                    `"${(u.name||"").replace(/"/g,"")}"`,u.email,
+                    `"${(u.targetUniversity||"").replace(/"/g,"")}"`,
+                    u.totalSessionsCompleted||0,
+                    u.createdAt?.toDate?.()?.toLocaleDateString("en-GB")||"",
+                  ].join(","))).join("\n");
+                navigator.clipboard?.writeText(csv)
+                  .then(()=>showToast?.(`${users.filter(u=>u.email).length} users from "${label}" copied ✓`,"success"))
+                  .catch(()=>showToast?.("Couldn't copy","error"));
+              };
+              return(
+                <div style={{maxWidth:640}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>USER SEGMENTS — WHO TO FOCUS ON</div>
+                  {segDefs.map(({key,label,desc,color})=>{
+                    const users=segments[key]||[];
+                    return(
+                      <div key={key} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"16px",marginBottom:10}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                          <div>
+                            <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:"#F7F3EC",marginBottom:2}}>{label}</div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>{desc}</div>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:900,color}}>{users.length}</div>
+                            {users.length>0&&(
+                              <button onClick={()=>copySegmentCSV(users,label)} className="btn-press"
+                                style={{padding:"5px 10px",border:`1px solid ${color}40`,borderRadius:6,background:`${color}10`,
+                                  color,fontFamily:"'DM Mono',monospace",fontSize:8,cursor:"pointer"}}>
+                                CSV
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {users.length>0&&(
+                          <div style={{marginTop:8}}>
+                            {users.slice(0,4).map((u,i)=>(
+                              <div key={i} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,padding:"4px 0",
+                                borderTop:i>0?`1px solid ${T.border}`:undefined,display:"flex",justifyContent:"space-between"}}>
+                                <span>{u.name||"—"} · {u.targetUniversity||"No school"}</span>
+                                <span style={{color:"rgba(247,243,236,0.3)"}}>{u.email}</span>
+                              </div>
+                            ))}
+                            {users.length>4&&(
+                              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginTop:6,textAlign:"center"}}>
+                                +{users.length-4} more — copy CSV to see all
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:10,padding:"12px 16px",marginTop:6}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,marginBottom:4}}>PREDICTED REVENUE (next 7 days)</div>
+                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:900,color:T.gold}}>
+                      ₦{((segments.likelyToPay?.length||0)*3500*0.25).toLocaleString("en-NG",{maximumFractionDigits:0})}
+                    </div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginTop:4}}>
+                      25% conversion of {segments.likelyToPay?.length||0} "Likely to Pay" users at ₦3,500
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── INTELLIGENCE TAB ── */}
+            {tab==="intelligence"&&(()=>{
+              const real=allUsers.filter(u=>!u.isTestAccount);
+              // Most failed topics across all users (from their stored weakTopics)
+              const topicCounts={};
+              real.forEach(u=>(u.weakTopics||[]).forEach(t=>{topicCounts[t]=(topicCounts[t]||0)+1;}));
+              const topTopics=Object.entries(topicCounts).sort((a,b)=>b[1]-a[1]).slice(0,15);
+              // School performance
+              const schoolMap={};
+              real.forEach(u=>{
+                const s=u.targetUniversity||"Unknown";
+                if(!schoolMap[s])schoolMap[s]={total:0,premium:0,avg:0,sessions:0};
+                schoolMap[s].total++;
+                if(u.isPremium)schoolMap[s].premium++;
+                schoolMap[s].sessions+=u.totalSessionsCompleted||0;
+              });
+              const schools=Object.entries(schoolMap).sort((a,b)=>b[1].total-a[1].total).slice(0,8)
+                .map(([s,d])=>({school:s,...d,convRate:Math.round((d.premium/d.total)*100)}));
+              // Acquisition performance
+              const heardMap={};
+              real.forEach(u=>{const h=u.referralSource||"Unknown";heardMap[h]=(heardMap[h]||0)+1;});
+              const channels=Object.entries(heardMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+              return(
+                <div style={{maxWidth:640}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>MARKET INTELLIGENCE — DATA COMPETITORS DON'T HAVE</div>
+
+                  <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:12}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#ef4444",letterSpacing:"0.1em",marginBottom:12}}>🔴 MOST FAILED TOPICS ACROSS ALL STUDENTS</div>
+                    {topTopics.map(([topic,count],i)=>(
+                      <div key={topic} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,minWidth:20}}>#{i+1}</div>
+                        <div style={{flex:1}}>
+                          <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#F7F3EC"}}>{topic}</span>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#ef4444"}}>{count} student{count!==1?"s":""}</span>
+                          </div>
+                          <div style={{height:4,background:"rgba(255,255,255,0.06)",borderRadius:2}}>
+                            <div style={{height:"100%",width:`${Math.min(100,(count/(topTopics[0]?.[1]||1))*100)}%`,background:"#ef4444",borderRadius:2}}/>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {topTopics.length===0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>No topic data yet — data builds as students practice.</div>}
+                  </div>
+
+                  <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:12}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:12}}>🏫 SCHOOL PERFORMANCE</div>
+                    {schools.map(s=>(
+                      <div key={s.school} style={{marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.border}`}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#F7F3EC",fontWeight:600}}>{s.school}</span>
+                          <div style={{display:"flex",gap:12}}>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>{s.total} students</span>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.success}}>{s.convRate}% paid</span>
+                          </div>
+                        </div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>
+                          {s.premium} premium · avg {Math.round(s.sessions/s.total)} sessions/student
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"18px",marginBottom:12}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",letterSpacing:"0.1em",marginBottom:12}}>📣 ACQUISITION CHANNEL PERFORMANCE</div>
+                    {channels.map(([channel,count])=>(
+                      <div key={channel} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#F7F3EC"}}>{channel}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <div style={{height:4,width:80,background:"rgba(255,255,255,0.06)",borderRadius:2}}>
+                            <div style={{height:"100%",width:`${Math.min(100,(count/(channels[0]?.[1]||1))*100)}%`,background:"#60a5fa",borderRadius:2}}/>
+                          </div>
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",minWidth:20}}>{count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ── CHURN TAB ── */}
             {tab==="churn"&&(()=>{
@@ -6260,6 +7031,60 @@ function FounderDashboardScreen({onBack,T,showToast}){
               );
             })()}
 
+            {tab==="applications"&&(
+              <div style={{maxWidth:640}}>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>
+                  AMBASSADOR APPLICATIONS · {applications.filter(a=>a.status==="pending").length} PENDING
+                </div>
+                {applications.length===0?(
+                  <div style={{textAlign:"center",padding:"40px 20px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted}}>No applications yet.</div>
+                ):applications.map(app=>(
+                  <div key={app.uid} style={{background:T.surface,border:`1px solid ${
+                    app.status==="pending"?`${T.gold}40`:app.status==="approved"?"rgba(74,222,128,0.3)":"rgba(192,57,43,0.3)"}`,
+                    borderRadius:12,padding:"18px",marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                      <div>
+                        <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:T.text,marginBottom:2}}>{app.name||"—"}</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{app.email}</div>
+                      </div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.1em",padding:"4px 10px",borderRadius:20,
+                        background:app.status==="pending"?`${T.gold}15`:app.status==="approved"?"rgba(74,222,128,0.12)":"rgba(192,57,43,0.1)",
+                        color:app.status==="pending"?T.gold:app.status==="approved"?"#4ade80":"#C0392B"}}>
+                        {(app.status||"pending").toUpperCase()}
+                      </div>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>📍 {app.school||"—"}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>🎓 {app.yearLevel||"—"}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,gridColumn:"1/-1"}}>🏛️ {app.department||"—"}</div>
+                    </div>
+                    {app.whyMe&&(
+                      <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}60`,marginBottom:4,letterSpacing:"0.1em"}}>WHY ME</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,lineHeight:1.7}}>{app.whyMe}</div>
+                      </div>
+                    )}
+                    {app.status==="pending"&&(
+                      <div style={{display:"flex",gap:8}}>
+                        <button onClick={()=>approveApplication(app)} className="btn-press"
+                          style={{flex:2,padding:"11px 0",border:"none",borderRadius:8,
+                            background:"rgba(74,222,128,0.15)",color:"#4ade80",
+                            fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                          ✓ Approve
+                        </button>
+                        <button onClick={()=>rejectApplication(app)} className="btn-press"
+                          style={{flex:1,padding:"11px 0",border:`1px solid ${T.border}`,borderRadius:8,
+                            background:"transparent",color:T.muted,
+                            fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}40`,textAlign:"center",margin:"24px 0",lineHeight:1.8,letterSpacing:"0.08em"}}>
               LIVE FROM FIRESTORE · ONLY VISIBLE TO FOUNDER ACCOUNT
               {stats.testAccountCount>0&&<><br/>{stats.testAccountCount} test account{stats.testAccountCount!==1?"s":""} excluded from stats above</>}
@@ -6503,6 +7328,13 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToast,onVerifyPayment}) {
   const pendingRef=localStorage.getItem("cq_pending_ref");
+  const[ambAppStatus,setAmbAppStatus]=useState(user.isAmbassador?"approved":null);
+  useEffect(()=>{
+    if(user.isAmbassador){setAmbAppStatus("approved");return;}
+    getDoc(doc(db,"ambassadorApplications",user.uid)).then(snap=>{
+      if(snap.exists())setAmbAppStatus(snap.data().status||"pending");
+    }).catch(()=>{});
+  },[user.uid,user.isAmbassador]);
 
   // Referral unlock tiers
   const refCount=user.referralCount||0;
@@ -6603,11 +7435,16 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
-            {icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"},
+            ...(ambAppStatus==="approved"||user.isAmbassador
+              ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
+              :ambAppStatus==="pending"
+                ?[{icon:<Clock size={18} color="#f97316"/>,label:"Ambassador Application",sub:"Pending review — we'll reach you within 24hrs",action:null,accent:"#f97316"}]
+                :[{icon:<Award size={18} color="#B8973E"/>,label:"Become a Campus Ambassador",sub:"Apply to represent CrediQ on your campus",action:()=>onNav("apply-ambassador"),accent:"#B8973E"}]
+            ),
             {icon:<Zap size={18} color={T.success}/>,label:"Why Premium?",sub:"See what unlocks when you upgrade",action:()=>onNav("whypremium"),accent:T.success},
             ...(isFounder(user)?[{icon:<BarChart2 size={18} color={T.gold}/>,label:"Founder Dashboard",sub:"Live analytics · students · conversion · growth",action:()=>onNav("founder"),accent:T.gold}]:[]),
           ].map((item,i)=>(
-            <div key={i} className="btn-press" onClick={item.action}
+            <div key={i} className={item.action?"btn-press":""} onClick={item.action||undefined}
               style={{background:T.surface,border:`1px solid ${T.border}`,borderLeft:'none',
                 borderRadius:10,padding:"16px 16px",marginBottom:8,cursor:"pointer",
                 display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -7109,6 +7946,19 @@ export default function App() {
         const todayStr=new Date().toISOString().split("T")[0];
         setDoc(doc(db,"dailyStats",todayStr),{sessions:increment(1),lastUpdated:todayStr},{merge:true}).catch(()=>{});
 
+        // ── MARKET MOAT: aggregate anonymised topic failure data ──────────────
+        // Each wrong topic gets a counter. Over time this reveals which questions
+        // predict exam success — a dataset competitors cannot replicate.
+        if(result.wrongTopics&&result.wrongTopics.length){
+          const moatUpdates={_sessions:increment(1),_lastUpdated:serverTimestamp()};
+          result.wrongTopics.forEach(t=>{
+            const key=t.replace(/[./\[\]#$]/g,"_");
+            moatUpdates[key]=increment(1);
+          });
+          if(result.subject){moatUpdates[`_sub_${result.subject.replace(/\s/g,"_")}`]=increment(1);}
+          setDoc(doc(db,"marketIntelligence","topicFailures"),moatUpdates,{merge:true}).catch(()=>{});
+        }
+
         // 2. Daily question count
         if(!user.isPremium){
           const newQToday=(user.questionsToday||0)+result.total;
@@ -7389,15 +8239,17 @@ export default function App() {
           {screen==="postonboard"&&user&&<PostOnboardingHookScreen user={user} T={T}
             onStart={()=>{if(user.subjects)loadQuestions(user.subjects);setScreen("setup");}}
             onLater={()=>setScreen("dashboard")}/>}
+          {screen==="apply-ambassador"&&user&&<AmbassadorApplicationScreen user={user} T={T} onBack={()=>setScreen("profile")} showToast={show}/>}
+          {screen==="intelligence"&&user&&<IntelligenceScreen user={user} history={history} T={T} onBack={()=>setScreen("dashboard")} onNav={handleNav}/>}
 
           {screen==="dashboard"&&user&&(
             !historyLoaded?<DashboardSkeleton T={T}/>:
-            <DashboardScreen user={user} history={history} historyLoaded={historyLoaded} QB={QB} onNav={handleNav} onLogout={handleLogout} dark={dark} setDark={setDark} T={T} showToast={show} streak={streak} onUpgrade={()=>setShowPremiumGate(true)}/>
+            <DashboardScreen user={user} history={history} historyLoaded={historyLoaded} QB={QB} onNav={handleNav} onLogout={handleLogout} dark={dark} setDark={setDark} T={T} showToast={show} streak={streak} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>
           )}
 
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T}/>}
-          {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show}/>}
+          {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T}/>}
           {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}

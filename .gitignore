@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 .vercel
 .env*.local
+serviceAccountKey.json
+serviceAccountKey.json
+.env
+.env.local

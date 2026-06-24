@@ -10,7 +10,7 @@ import {
 import { auth, db, track } from "./firebase";
 import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification,
-  signOut, onAuthStateChanged
+  signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup
 } from "firebase/auth";
 import {
   doc, getDoc, setDoc, updateDoc, addDoc,
@@ -1080,7 +1080,7 @@ function calcReviewQueue(history) {
   const topicMap={};
   clean.forEach(h=>{
     const d=h.date||new Date().toISOString();
-    (h.wrongTopics||[]).forEach(t=>{
+    (h.wrongTopics||[]).filter(t=>t&&t!=="Uncategorized").forEach(t=>{
       if(!topicMap[t])topicMap[t]={wrong:0,lastDate:d,subject:h.subject||""};
       topicMap[t].wrong++;
       if(d>topicMap[t].lastDate)topicMap[t].lastDate=d;
@@ -1119,7 +1119,7 @@ function calcTopicStatus(history) {
   // Track which subject each topic came from
   const topicSubjectMap={};
   clean.forEach(h=>(h.wrongTopics||[]).forEach(t=>{if(!topicSubjectMap[t])topicSubjectMap[t]=h.subject;}));
-  const allTopics=[...new Set(clean.flatMap(h=>h.wrongTopics||[]))];
+  const allTopics=[...new Set(clean.flatMap(h=>h.wrongTopics||[]))].filter(t=>t&&t!=="Uncategorized");
   const weak=[],improving=[],graduated=[];
   allTopics.forEach(t=>{
     const totalWrong=count(clean,t);
@@ -2240,6 +2240,51 @@ function LandingScreen({onGetStarted,onLogin,T}) {
   );
 }
 
+// ─── POST-ONBOARDING HOOK SCREEN ─────────────────────────────────────────────
+function PostOnboardingHookScreen({user,T,onStart,onLater}){
+  const course=user?.course?.split("/")?.[0]?.trim()||"your course";
+  const uni=user?.targetUniversity||"your university";
+  return(
+    <div style={{minHeight:"100dvh",background:"linear-gradient(160deg,#020D08 0%,#061410 40%,#0A1C12 70%,#040D07 100%)",
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+      padding:"32px 24px",textAlign:"center"}}>
+      <div style={{width:"100%",maxWidth:380}}>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(184,151,62,0.5)",
+          letterSpacing:"0.22em",marginBottom:20}}>SETUP COMPLETE</div>
+
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:28,fontWeight:900,
+          color:"#F7F3EC",lineHeight:1.15,marginBottom:14}}>
+          Your JUPEB score is unknown right now.
+        </div>
+
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(247,243,236,0.4)",
+          lineHeight:1.9,marginBottom:10,maxWidth:320,margin:"0 auto 10px"}}>
+          Every {uni} {course} student who walks in confident did one thing — they found their gaps early and fixed them.
+        </div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(247,243,236,0.4)",
+          lineHeight:1.9,marginBottom:36,maxWidth:320,margin:"0 auto 36px"}}>
+          Your first session takes 15 minutes. It shows you exactly where you stand.
+        </div>
+
+        <button onClick={onStart}
+          style={{width:"100%",padding:"17px 0",border:"none",borderRadius:14,
+            background:"linear-gradient(135deg,#004B3B,#8A6A1E)",color:"#F7F3EC",
+            fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,cursor:"pointer",
+            boxShadow:"0 8px 32px rgba(0,75,59,0.45)",letterSpacing:"0.01em",marginBottom:14}}>
+          Start My First Session Now →
+        </button>
+
+        <button onClick={onLater}
+          style={{background:"none",border:"none",color:"rgba(247,243,236,0.2)",
+            fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",letterSpacing:"0.12em",
+            padding:"8px 0",width:"100%"}}>
+          I'LL DO IT LATER
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── AUTH SCREEN ──────────────────────────────────────────────────────────────
 function AuthScreen({onAuth,dark,setDark,T}) {
   const [mode,setMode]=useState("login");
@@ -2265,6 +2310,46 @@ function AuthScreen({onAuth,dark,setDark,T}) {
   };
   const shake=msg=>{setErr(msg);setShaking(true);setTimeout(()=>setShaking(false),400);};
   const inp=f=>({width:"100%",background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"13px 16px",fontSize:16,outline:"none",color:"#F7F3EC",border:getInline(f)?"1px solid rgba(192,57,43,0.8)":focused===f?"1px solid rgba(184,151,62,0.55)":"1px solid rgba(184,151,62,0.22)",transition:"border .15s"});
+
+  const handleGoogleSignIn=async()=>{
+    setErr("");setLoading(true);
+    try{
+      const provider=new GoogleAuthProvider();
+      const result=await signInWithPopup(auth,provider);
+      const fbUser=result.user;
+      const userDoc=await getDoc(doc(db,"users",fbUser.uid));
+      if(userDoc.exists()){
+        // Returning user — load their data
+        const userData=userDoc.data();
+        Session.generate();
+        track("login",{uid:fbUser.uid,method:"google"});
+        onAuth({uid:fbUser.uid,...userData});
+      }else{
+        // New user — create doc and start onboarding
+        const referredBy=localStorage.getItem("cq_ref")||null;
+        const newUser={
+          uid:fbUser.uid,
+          name:fbUser.displayName||"",
+          email:fbUser.email,
+          onboarded:false,
+          isPremium:false,
+          referralCode:makeRef(fbUser.uid),
+          referralCount:0,
+          referredBy,
+          createdAt:serverTimestamp(),
+          profileEdits:0,
+        };
+        await setDoc(doc(db,"users",fbUser.uid),newUser);
+        if(referredBy)localStorage.removeItem("cq_ref");
+        Session.generate();
+        track("signup",{uid:fbUser.uid,method:"google"});
+        onAuth(newUser);
+      }
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
+      else shake(e.message&&!e.code?e.message:mapErr(e.code));
+    }finally{setLoading(false);}
+  };
 
   const handleSubmit=async()=>{
     setErr("");setShaking(false);
@@ -2395,6 +2480,29 @@ function AuthScreen({onAuth,dark,setDark,T}) {
             ))}
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
+
+            {/* ── GOOGLE SIGN-IN ── */}
+            <button type="button" onClick={handleGoogleSignIn} disabled={loading}
+              style={{width:"100%",padding:"13px 16px",border:"1px solid rgba(184,151,62,0.25)",borderRadius:10,
+                background:"rgba(255,255,255,0.04)",color:"#F7F3EC",fontFamily:"'DM Mono',monospace",
+                fontSize:12,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",
+                justifyContent:"center",gap:10,letterSpacing:"0.04em",transition:"background .15s",
+                opacity:loading?0.6:1}}>
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+                <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+                <path d="M3.964 10.706A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.038l3.007-2.332z" fill="#FBBC05"/>
+                <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+              </svg>
+              Continue with Google
+            </button>
+
+            {/* ── OR DIVIDER ── */}
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1,height:1,background:"rgba(184,151,62,0.15)"}}/>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.2)",letterSpacing:"0.12em"}}>OR</span>
+              <div style={{flex:1,height:1,background:"rgba(184,151,62,0.15)"}}/>
+            </div>
             {mode==="signup"&&(
               <div>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.3)",letterSpacing:"0.16em",marginBottom:7}}>YOUR NAME</div>
@@ -3965,7 +4073,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
     let correct=0;const wrongTopics=[];
     const qResults=questions.map((q,i)=>{
       const ua=latestAnswers[i];const ok=ua===q.correctAnswer;
-      if(ok)correct++;else if(q.topic)wrongTopics.push(q.topic);
+      if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
       return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua||null,correctAnswer:q.correctAnswer,explanation:q.explanation||""};
     });
     const total=questions.length,pct=Math.round((correct/total)*100);
@@ -3993,7 +4101,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
           .map(([idx,ua])=>{
             const q=questions[parseInt(idx)];
             const ok=ua===q.correctAnswer;
-            if(ok)correct++;else if(q.topic)wrongTopics.push(q.topic);
+            if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
             return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua,correctAnswer:q.correctAnswer,explanation:q.explanation||"",timeSpent:0};
           });
         const total=qResults.length;
@@ -6939,7 +7047,7 @@ export default function App() {
     setUser(updatedUser);
     UserCache.set(updatedUser);
     setOnboardComplete(true);
-    setTimeout(()=>{setOnboardComplete(false);setScreen("dashboard");},2200);
+    setTimeout(()=>{setOnboardComplete(false);setScreen("postonboard");},2200);
   };
 
   const handleExamEnd=async result=>{
@@ -7278,6 +7386,9 @@ export default function App() {
           {screen==="landing"&&<LandingScreen onGetStarted={()=>setScreen("auth")} onLogin={()=>setScreen("auth")} T={T}/>}
           {screen==="auth"&&<AuthScreen onAuth={handleAuth} dark={dark} setDark={setDark} T={T} hideTheme={showSidebar}/>}
           {screen==="onboard"&&user&&<OnboardScreen user={user} onDone={handleOnboard} dark={dark} setDark={setDark} T={T} hideTheme={showSidebar}/>}
+          {screen==="postonboard"&&user&&<PostOnboardingHookScreen user={user} T={T}
+            onStart={()=>{if(user.subjects)loadQuestions(user.subjects);setScreen("setup");}}
+            onLater={()=>setScreen("dashboard")}/>}
 
           {screen==="dashboard"&&user&&(
             !historyLoaded?<DashboardSkeleton T={T}/>:

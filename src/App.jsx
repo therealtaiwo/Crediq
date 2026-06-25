@@ -2609,7 +2609,18 @@ function AuthScreen({onAuth,dark,setDark,T}) {
     setErr("");setLoading(true);
     try{
       const provider=new GoogleAuthProvider();
-      const result=await signInWithPopup(auth,provider);
+      let result=null;
+      try{
+        result=await signInWithPopup(auth,provider);
+      }catch(popupErr){
+        // Popup blocked (common on Android Chrome) — fall back to redirect
+        if(popupErr.code==="auth/popup-blocked"||popupErr.code==="auth/cancelled-popup-request"){
+          await signInWithRedirect(auth,provider);
+          return; // page redirects to Google; getRedirectResult in App() handles the return
+        }
+        if(popupErr.code==="auth/popup-closed-by-user"){setLoading(false);return;}
+        throw popupErr;
+      }
       const fbUser=result.user;
       const userDoc=await getDoc(doc(db,"users",fbUser.uid));
       if(userDoc.exists()){

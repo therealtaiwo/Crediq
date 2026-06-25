@@ -2609,39 +2609,30 @@ function AuthScreen({onAuth,dark,setDark,T}) {
     setErr("");setLoading(true);
     try{
       const provider=new GoogleAuthProvider();
-      const isMobile=/Android|iPhone|iPad/i.test(navigator.userAgent);
-      if(isMobile){
-        // Mobile: use redirect (popup gets blocked on Android Chrome)
-        await signInWithRedirect(auth,provider);
-        // Page will redirect to Google and come back — handled in useEffect below
-        return;
-      }
-      // Desktop: popup works fine
       const result=await signInWithPopup(auth,provider);
-      await handleGoogleResult(result);
-    }catch(e){
-      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
-      else shake(e.message&&!e.code?e.message:mapErr(e.code));
-    }finally{setLoading(false);}
-  };
-
-  const handleGoogleResult=async(result)=>{
-    if(!result?.user)return;
-    const fbUser=result.user;
-    try{
+      const fbUser=result.user;
       const userDoc=await getDoc(doc(db,"users",fbUser.uid));
       if(userDoc.exists()){
+        // Returning user — load their data
+        const userData=userDoc.data();
         Session.generate();
         track("login",{uid:fbUser.uid,method:"google"});
-        onAuth({uid:fbUser.uid,...userDoc.data()});
+        onAuth({uid:fbUser.uid,...userData});
       }else{
+        // New user — create doc and start onboarding
         const referredBy=localStorage.getItem("cq_ref")||null;
         const newUser={
-          uid:fbUser.uid,name:fbUser.displayName||"",
-          email:fbUser.email,onboarded:false,isPremium:false,
-          referralCode:makeRef(fbUser.uid),referralCount:0,
-          referredBy,createdAt:serverTimestamp(),
-          profileEdits:0,userRole:"student",
+          uid:fbUser.uid,
+          name:fbUser.displayName||"",
+          email:fbUser.email,
+          onboarded:false,
+          isPremium:false,
+          referralCode:makeRef(fbUser.uid),
+          referralCount:0,
+          referredBy,
+          createdAt:serverTimestamp(),
+          profileEdits:0,
+          userRole:"student",
         };
         await setDoc(doc(db,"users",fbUser.uid),newUser);
         if(referredBy)localStorage.removeItem("cq_ref");
@@ -2649,16 +2640,11 @@ function AuthScreen({onAuth,dark,setDark,T}) {
         track("signup",{uid:fbUser.uid,method:"google"});
         onAuth(newUser);
       }
-    }catch(e){shake(e.message||"Sign in failed. Try again.");}
-    finally{setLoading(false);}
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
+      else shake(e.message&&!e.code?e.message:mapErr(e.code));
+    }finally{setLoading(false);}
   };
-
-  // Handle redirect result when app loads after Google redirect on mobile
-  useEffect(()=>{
-    getRedirectResult(auth).then(result=>{
-      if(result?.user)handleGoogleResult(result);
-    }).catch(()=>{});
-  },[]);
 
   const handleSubmit=async()=>{
     setErr("");setShaking(false);
@@ -5963,7 +5949,6 @@ function AmbassadorScreen({user,onBack,T}) {
   const [refData,setRefData]=useState(null);
   const [loading,setLoading]=useState(true);
   const [leaderboard,setLeaderboard]=useState([]);
-  const [ambClicks,setAmbClicks]=useState(0);
   const referralLink=`https://credi-q.vercel.app?ref=${user?.referralCode||""}`;
 
   useEffect(()=>{
@@ -5973,10 +5958,6 @@ function AmbassadorScreen({user,onBack,T}) {
       if(snap.exists())setRefData(snap.data());
       setLoading(false);
     }).catch(()=>setLoading(false));
-    // Load own click count from ambassadors collection
-    getDoc(doc(db,"ambassadors",user.referralCode.toUpperCase())).then(snap=>{
-      if(snap.exists())setAmbClicks(snap.data().clicks||0);
-    }).catch(()=>{});
     // Load leaderboard from ambassadors collection
     getDocs(collection(db,"ambassadors")).then(snap=>{
       const board=snap.docs.map(d=>d.data())
@@ -6017,9 +5998,8 @@ function AmbassadorScreen({user,onBack,T}) {
       <div style={{padding:"18px",maxWidth:1000,margin:"0 auto",width:"100%"}}>
 
         {/* Stats row */}
-        <div className="fi1" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+        <div className="fi1" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
           {[
-            {label:"LINK CLICKS",value:ambClicks,color:"#60a5fa"},
             {label:"SIGNED UP",value:refData?.signups||0,color:T.gold},
             {label:"PAID",value:paidCount,color:T.success},
             {label:"EARNINGS",value:`₦${earnings.toLocaleString()}`,color:"#a78bfa"},
@@ -6433,9 +6413,6 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[newName,setNewName]=useState("");
   const[newCode,setNewCode]=useState("");
   const[creating,setCreating]=useState(false);
-  const[allAmbassadors,setAllAmbassadors]=useState([]);
-  const[ambSearch,setAmbSearch]=useState("");
-  const[makingAmbassador,setMakingAmbassador]=useState(false);
   // Ambassador applications
   const[applications,setApplications]=useState([]);
   // Email
@@ -6475,10 +6452,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
       const totalReferred=ambassadors.reduce((a,b)=>a+(b.totalReferrals||0),0);
       const totalPremiumReferrals=ambassadors.reduce((a,b)=>a+(b.premiumReferrals||0),0);
       const totalPayouts=ambassadors.reduce((a,b)=>a+(b.earnings||0),0);
-      const sortedAmbassadors=[...ambassadors].sort((a,b)=>(b.premiumReferrals||0)-(a.premiumReferrals||0));
-      const topAmbassadors=sortedAmbassadors.slice(0,10)
-        .map(a=>({code:a.code||a.id,name:a.name||"",referred:a.totalReferrals||0,premium:a.premiumReferrals||0,earned:a.earnings||0,clicks:a.clicks||0}));
-      setAllAmbassadors(sortedAmbassadors.map(a=>({code:a.code||a.id,name:a.name||"",referred:a.totalReferrals||0,premium:a.premiumReferrals||0,earned:a.earnings||0,clicks:a.clicks||0,email:a.email||"",uid:a.uid||""})));
+      const topAmbassadors=ambassadors.sort((a,b)=>(b.premiumReferrals||0)-(a.premiumReferrals||0)).slice(0,10)
+        .map(a=>({code:a.code||a.id,name:a.name||"",referred:a.totalReferrals||0,premium:a.premiumReferrals||0,earned:a.earnings||0}));
       // Revenue — daily conversions last 30 days (real users only)
       const revenueByDay={};
       realUsers.filter(u=>u.paidAt).forEach(u=>{
@@ -6655,27 +6630,6 @@ function FounderDashboardScreen({onBack,T,showToast}){
     setSending(false);
   };
 
-  const makeAmbassador=async(targetUser)=>{
-    const code=(targetUser.referralCode||makeRef(targetUser.id)).toUpperCase();
-    setMakingAmbassador(true);
-    try{
-      await setDoc(doc(db,"ambassadors",code),{
-        code,name:targetUser.name||code,email:targetUser.email||"",
-        uid:targetUser.id,totalReferrals:targetUser.referralCount||0,
-        premiumReferrals:0,earnings:0,clicks:0,
-        createdAt:serverTimestamp(),source:"founder_promote"
-      },{merge:true});
-      await updateDoc(doc(db,"users",targetUser.id),{isAmbassador:true});
-      setAllUsers(prev=>prev.map(u=>u.id===targetUser.id?{...u,isAmbassador:true}:u));
-      setSelectedUser(u=>({...u,isAmbassador:true}));
-      const link=`https://credi-q.vercel.app?ref=${code}`;
-      navigator.clipboard?.writeText(link).catch(()=>{});
-      showToast?.(`${targetUser.name||code} is now an ambassador · link copied`,"success");
-      load(true);
-    }catch(e){showToast?.("Failed — check Firestore rules","error");}
-    setMakingAmbassador(false);
-  };
-
   const copyAmbassadorLink=code=>{
     const link=`https://credi-q.vercel.app?ref=${code}`;
     navigator.clipboard?.writeText(link).then(()=>showToast?.("Link copied!","success")).catch(()=>showToast?.("Couldn't copy","error"));
@@ -6727,7 +6681,6 @@ function FounderDashboardScreen({onBack,T,showToast}){
     {id:"users",label:`USERS (${allUsers.filter(u=>!u.isTestAccount).length})`},
     {id:"segments",label:"SEGMENTS"},
     {id:"intelligence",label:"INTELLIGENCE"},
-    {id:"ambassadors",label:`AMBASSADORS (${allAmbassadors.length})`},
     {id:"churn",label:"CHURN"},
     {id:"email",label:"EMAIL"},
     {id:"export",label:"EXPORT"},
@@ -7087,78 +7040,6 @@ function FounderDashboardScreen({onBack,T,showToast}){
               );
             })()}
 
-            {/* ── AMBASSADORS TAB ── */}
-            {tab==="ambassadors"&&(
-              <div style={{maxWidth:800}}>
-                {/* Summary stats */}
-                <div style={{display:"grid",gridTemplateColumns:isDesktop?"repeat(3,1fr)":"1fr 1fr",gap:10,marginBottom:16}}>
-                  <StatCard label="TOTAL AMBASSADORS" value={allAmbassadors.length}/>
-                  <StatCard label="TOTAL CLICKS" value={allAmbassadors.reduce((a,b)=>a+(b.clicks||0),0)} color="#60a5fa"/>
-                  <StatCard label="TOTAL SIGNUPS" value={allAmbassadors.reduce((a,b)=>a+(b.referred||0),0)} color={T.gold}/>
-                  <StatCard label="PREMIUM CONVERSIONS" value={allAmbassadors.reduce((a,b)=>a+(b.premium||0),0)} color="#4ade80"/>
-                  <StatCard label="TOTAL PAYOUTS" value={`₦${allAmbassadors.reduce((a,b)=>a+(b.earned||0),0).toLocaleString()}`} color="#f97316"/>
-                  <StatCard label="AVG CONVERSION" value={allAmbassadors.length&&allAmbassadors.reduce((a,b)=>a+(b.referred||0),0)>0?`${((allAmbassadors.reduce((a,b)=>a+(b.premium||0),0)/allAmbassadors.reduce((a,b)=>a+(b.referred||0),0))*100).toFixed(0)}%`:"—"} color="#a78bfa"/>
-                </div>
-
-                {/* Create form */}
-                <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"16px",marginBottom:12}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:10}}>+ CREATE NEW AMBASSADOR</div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Name (e.g. Nancy - LAUTECH)"
-                      style={{flex:"1 1 160px",padding:"9px 10px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:12,fontFamily:"sans-serif",boxSizing:"border-box"}}/>
-                    <input value={newCode} onChange={e=>setNewCode(e.target.value)} placeholder="Code (optional)"
-                      style={{flex:"1 1 100px",padding:"9px 10px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontSize:12,fontFamily:"'DM Mono',monospace",letterSpacing:"0.05em",boxSizing:"border-box"}}/>
-                    <button onClick={createAmbassador} disabled={creating} className="btn-press"
-                      style={{padding:"9px 18px",background:"rgba(184,151,62,0.15)",border:`1px solid ${T.gold}50`,borderRadius:8,color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",flexShrink:0}}>
-                      {creating?"CREATING...":"CREATE"}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Search */}
-                <input value={ambSearch} onChange={e=>setAmbSearch(e.target.value)} placeholder="Search name or code…"
-                  style={{width:"100%",padding:"10px 14px",marginBottom:12,background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:11,outline:"none",boxSizing:"border-box"}}/>
-
-                {/* Ambassador list */}
-                {allAmbassadors
-                  .filter(a=>!ambSearch.trim()||
-                    (a.name||"").toLowerCase().includes(ambSearch.toLowerCase())||
-                    (a.code||"").toLowerCase().includes(ambSearch.toLowerCase()))
-                  .map((a,i)=>(
-                  <div key={a.code} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px",marginBottom:8}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                      <div style={{width:28,height:28,borderRadius:8,background:i===0?"rgba(184,151,62,0.2)":"rgba(255,255,255,0.04)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Mono',monospace",fontSize:11,color:i===0?T.gold:T.muted,fontWeight:700,flexShrink:0}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}</div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:14,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name||a.code}</div>
-                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginTop:1,letterSpacing:"0.08em"}}>{a.code}{a.email?` · ${a.email}`:""}</div>
-                      </div>
-                      <button onClick={()=>copyAmbassadorLink(a.code)} className="btn-press"
-                        style={{background:"rgba(184,151,62,0.08)",border:`1px solid ${T.gold}30`,borderRadius:7,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
-                        <Copy size={11} color={T.gold}/>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.gold,letterSpacing:"0.06em"}}>COPY LINK</span>
-                      </button>
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
-                      {[
-                        {label:"CLICKS",value:a.clicks||0,color:"#60a5fa"},
-                        {label:"SIGNUPS",value:a.referred||0,color:T.gold},
-                        {label:"PREMIUM",value:a.premium||0,color:"#4ade80"},
-                        {label:"EARNED",value:`₦${(a.earned||0).toLocaleString()}`,color:"#a78bfa"},
-                      ].map(s=>(
-                        <div key={s.label} style={{background:T.bg,borderRadius:8,padding:"8px 4px",textAlign:"center"}}>
-                          <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:900,color:s.color}}>{s.value}</div>
-                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,marginTop:2,letterSpacing:"0.06em"}}>{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                {allAmbassadors.length===0&&(
-                  <div style={{textAlign:"center",padding:"40px 20px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted}}>No ambassadors yet. Create one above or promote an existing user from the Users tab.</div>
-                )}
-              </div>
-            )}
-
             {/* ── CHURN TAB ── */}
             {tab==="churn"&&(()=>{
               const neverPracticed=allUsers.filter(u=>!u.totalSessionsCompleted||u.totalSessionsCompleted===0);
@@ -7289,10 +7170,6 @@ function FounderDashboardScreen({onBack,T,showToast}){
                       <button onClick={()=>{navigator.clipboard?.writeText(selectedUser.email);showToast?.("Email copied","success");}} className="btn-press"
                         style={{width:"100%",marginTop:10,padding:"12px 0",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>
                         COPY EMAIL
-                      </button>
-                      <button onClick={()=>selectedUser.isAmbassador?copyAmbassadorLink(selectedUser.referralCode):makeAmbassador(selectedUser)} disabled={makingAmbassador} className="btn-press"
-                        style={{width:"100%",marginTop:10,padding:"12px 0",border:`1px solid ${selectedUser.isAmbassador?"rgba(184,151,62,0.4)":"rgba(184,151,62,0.25)"}`,borderRadius:8,background:selectedUser.isAmbassador?"rgba(184,151,62,0.1)":"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
-                        {makingAmbassador?"...":(selectedUser.isAmbassador?"COPY AMBASSADOR LINK":"MAKE AMBASSADOR")}
                       </button>
                     </div>
                   </motion.div>
@@ -8179,16 +8056,11 @@ export default function App() {
     },()=>{}); // silently ignore listener errors (offline etc)
   };
 
-  // Capture referral code from URL on load (?ref=CODE) + track click
+  // Capture referral code from URL on load (?ref=CODE)
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
     const ref=params.get("ref");
-    if(ref){
-      const code=ref.trim().toUpperCase();
-      localStorage.setItem("cq_ref",code);
-      // Best-effort click tracking — Firestore rule allows anyone to increment clicks +1
-      updateDoc(doc(db,"ambassadors",code),{clicks:increment(1)}).catch(()=>{});
-    }
+    if(ref)localStorage.setItem("cq_ref",ref.trim().toUpperCase());
   },[]);
 
   // Load streak on mount
@@ -8267,8 +8139,8 @@ export default function App() {
             // No user doc + unverified — brand new, let signup flow handle it
             setScreen(s=>s==="loading"?"landing":s);return;
           }else{
-            // No doc + emailVerified = new Google/social user returning after mobile redirect
-            // onAuthStateChanged fires before AuthScreen ever mounts, so we must handle this here
+            // No doc + emailVerified = new Google user (popup or redirect)
+            // Create their doc and route to onboarding
             try{
               const referredBy=localStorage.getItem("cq_ref")||null;
               const newUser={
@@ -8299,10 +8171,8 @@ export default function App() {
     return ()=>{clearTimeout(safetyTimer);unsub();};
   },[]);
 
-
-  // getRedirectResult backup — catches the mobile Google redirect result at App root
-  // AuthScreen never mounts after a redirect (onAuthStateChanged lands users elsewhere first)
-  // so getRedirectResult inside AuthScreen is dead on mobile — this fires instead
+  // getRedirectResult at App root — fallback for any pending Google redirect
+  // (covers popup-blocked case where signInWithRedirect was used)
   useEffect(()=>{
     getRedirectResult(auth).then(async result=>{
       if(!result?.user)return;
@@ -8310,14 +8180,13 @@ export default function App() {
       try{
         const existingDoc=await getUserDoc(fbUser.uid);
         if(existingDoc){
-          // Returning Google user — onAuthStateChanged should cover them, but make sure
           const fullUser={uid:fbUser.uid,...existingDoc};
           setUser(fullUser);UserCache.set(fullUser);
           localStorage.setItem("cq_current_uid",fbUser.uid);
+          Session.generate();
           setScreen(existingDoc.onboarded?"dashboard":"onboard");
           loadHistory(fbUser.uid);attachUserListener(fbUser.uid);
         }else{
-          // New Google user — onAuthStateChanged fix above covers this too, but belt + suspenders
           const referredBy=localStorage.getItem("cq_ref")||null;
           const newUser={
             name:fbUser.displayName||"",email:fbUser.email||"",
@@ -8334,7 +8203,7 @@ export default function App() {
           Session.generate();track("signup",{uid:fbUser.uid,method:"google"});
           setScreen("onboard");loadHistory(fbUser.uid);attachUserListener(fbUser.uid);
         }
-      }catch(e){console.error("[CrediQ] getRedirectResult App:",e);}
+      }catch(e){console.error("[CrediQ] getRedirectResult:",e);}
     }).catch(()=>{});
   },[]);
 

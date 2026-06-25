@@ -8266,7 +8266,30 @@ export default function App() {
           }else if(!fbUser.emailVerified){
             // No user doc + unverified — brand new, let signup flow handle it
             setScreen(s=>s==="loading"?"landing":s);return;
-          }else{UserCache.clear();setScreen("landing");}
+          }else{
+            // No doc + emailVerified = new Google/social user returning after mobile redirect
+            // onAuthStateChanged fires before AuthScreen ever mounts, so we must handle this here
+            try{
+              const referredBy=localStorage.getItem("cq_ref")||null;
+              const newUser={
+                name:fbUser.displayName||"",email:fbUser.email||"",
+                onboarded:false,isPremium:false,
+                referralCode:makeRef(fbUser.uid),referralCount:0,
+                referredBy,createdAt:serverTimestamp(),
+                profileEdits:0,userRole:"student",
+              };
+              await setDoc(doc(db,"users",fbUser.uid),newUser);
+              if(referredBy)localStorage.removeItem("cq_ref");
+              const fullUser={uid:fbUser.uid,...newUser};
+              setUser(fullUser);UserCache.set(fullUser);
+              localStorage.setItem("cq_current_uid",fbUser.uid);
+              Session.generate();
+              track("signup",{uid:fbUser.uid,method:"google"});
+              setScreen("onboard");
+              loadHistory(fbUser.uid);
+              attachUserListener(fbUser.uid);
+            }catch{setScreen("landing");}
+          }
         }catch{
           // Network error — keep showing cached screen, don't kick user out
           if(!cachedUser)setScreen("landing");
@@ -8276,6 +8299,44 @@ export default function App() {
     return ()=>{clearTimeout(safetyTimer);unsub();};
   },[]);
 
+
+  // getRedirectResult backup — catches the mobile Google redirect result at App root
+  // AuthScreen never mounts after a redirect (onAuthStateChanged lands users elsewhere first)
+  // so getRedirectResult inside AuthScreen is dead on mobile — this fires instead
+  useEffect(()=>{
+    getRedirectResult(auth).then(async result=>{
+      if(!result?.user)return;
+      const fbUser=result.user;
+      try{
+        const existingDoc=await getUserDoc(fbUser.uid);
+        if(existingDoc){
+          // Returning Google user — onAuthStateChanged should cover them, but make sure
+          const fullUser={uid:fbUser.uid,...existingDoc};
+          setUser(fullUser);UserCache.set(fullUser);
+          localStorage.setItem("cq_current_uid",fbUser.uid);
+          setScreen(existingDoc.onboarded?"dashboard":"onboard");
+          loadHistory(fbUser.uid);attachUserListener(fbUser.uid);
+        }else{
+          // New Google user — onAuthStateChanged fix above covers this too, but belt + suspenders
+          const referredBy=localStorage.getItem("cq_ref")||null;
+          const newUser={
+            name:fbUser.displayName||"",email:fbUser.email||"",
+            onboarded:false,isPremium:false,
+            referralCode:makeRef(fbUser.uid),referralCount:0,
+            referredBy,createdAt:serverTimestamp(),
+            profileEdits:0,userRole:"student",
+          };
+          await setDoc(doc(db,"users",fbUser.uid),newUser,{merge:true});
+          if(referredBy)localStorage.removeItem("cq_ref");
+          const fullUser={uid:fbUser.uid,...newUser};
+          setUser(fullUser);UserCache.set(fullUser);
+          localStorage.setItem("cq_current_uid",fbUser.uid);
+          Session.generate();track("signup",{uid:fbUser.uid,method:"google"});
+          setScreen("onboard");loadHistory(fbUser.uid);attachUserListener(fbUser.uid);
+        }
+      }catch(e){console.error("[CrediQ] getRedirectResult App:",e);}
+    }).catch(()=>{});
+  },[]);
 
   // LAZY LOADING — questions only load when Practice is tapped
   const loadQuestions=async subjects=>{

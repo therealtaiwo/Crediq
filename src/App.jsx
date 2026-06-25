@@ -852,6 +852,144 @@ const UNIVERSITIES_DATA=[
     "Business Administration":{minPoints:8,label:"Accessible",combination:["Mathematics","Economics","Government"]},
   }},
   // ── NON-JUPEB — searchable, shows warning ────────────────────────────────────
+  {name:"University of Calabar",shortName:"UNICAL",tier:1,type:"Federal",location:"Calabar, Cross River",state:"Cross River",acceptsJUPEB:true,searchAliases:["unical","calabar","cross river","cal"],popularRank:10,courses:{
+    "Medicine / Surgery":{minPoints:16,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Law":{minPoints:14,label:"Very Competitive",combination:["Literature in English","Government","Economics"]},
+    "Pharmacy":{minPoints:15,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Engineering":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:12,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:12,label:"Competitive",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:12,label:"Competitive",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:12,label:"Competitive",combination:["Literature in English","Government","Economics"]},
+    "Nursing":{minPoints:13,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+  }},
+  {name:"University of Jos",shortName:"UNIJOS",tier:1,type:"Federal",location:"Jos, Plateau",state:"Plateau",acceptsJUPEB:true,searchAliases:["unijos","jos","plateau"],popularRank:11,courses:{
+    "Medicine / Surgery":{minPoints:15,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Law":{minPoints:13,label:"Competitive",combination:["Literature in English","Government","Economics"]},
+    "Pharmacy":{minPoints:14,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Engineering":{minPoints:12,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:12,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Nursing":{minPoints:12,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+  }},
+  {name:"Bayero University, Kano",shortName:"BUK",tier:1,type:"Federal",location:"Kano, Kano",state:"Kano",acceptsJUPEB:true,searchAliases:["buk","bayero","kano"],popularRank:12,courses:{
+    "Medicine / Surgery":{minPoints:15,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Law":{minPoints:13,label:"Competitive",combination:["Literature in English","Government","Economics"]},
+    "Engineering":{minPoints:12,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:12,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+  }},
+  {name:"Federal University of Technology, Minna",shortName:"FUTMinna",tier:1,type:"Federal",location:"Minna, Niger",state:"Niger",acceptsJUPEB:true,searchAliases:["futminna","minna","niger state","fut minna"],popularRank:13,courses:{
+    "Engineering":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Agriculture":{minPoints:10,label:"Moderate",combination:["Biology","Chemistry","Agricultural Science"]},
+  }},
+  {name:"Adekunle Ajasin University",shortName:"AAUA",tier:2,type:"State",location:"Akungba-Akoko, Ondo",state:"Ondo",acceptsJUPEB:true,searchAliases:["aaua","adekunle ajasin","akungba","akoko","ondo state"],popularRank:19,courses:{
+    "Law":{minPoints:13,label:"Competitive",combination:["Literature in English","Government","Economics"]},
+    "Medicine / Surgery":{minPoints:14,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Pharmacy":{minPoints:13,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Engineering":{minPoints:12,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:11,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:11,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Nursing":{minPoints:12,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+  }},
+  {name:"Benue State University",shortName:"BSU",tier:2,type:"State",location:"Makurdi, Benue",state:"Benue",acceptsJUPEB:true,searchAliases:["bsu","benue","makurdi"],popularRank:31,courses:{
+    "Law":{minPoints:12,label:"Competitive",combination:["Literature in English","Government","Economics"]},
+    "Medicine / Surgery":{minPoints:14,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Engineering":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+  }},
+  {name:"Kaduna State University",shortName:"KASU",tier:2,type:"State",location:"Kaduna, Kaduna",state:"Kaduna",acceptsJUPEB:true,searchAliases:["kasu","kaduna state"],popularRank:32,courses:{
+    "Law":{minPoints:12,label:"Competitive",combination:["Literature in English","Government","Economics"]},
+    "Engineering":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+  }},
+  {name:"Al-Hikmah University",shortName:"Al-Hikmah",tier:3,type:"Private",location:"Ilorin, Kwara",state:"Kwara",acceptsJUPEB:true,searchAliases:["al hikmah","alhikmah","hikmah","ilorin private","kwara private"],popularRank:33,courses:{
+    "Law":{minPoints:11,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+  }},
+  {name:"Madonna University",shortName:"Madonna",tier:3,type:"Private",location:"Elele, Rivers",state:"Rivers",acceptsJUPEB:true,searchAliases:["madonna","elele","rivers private","okija"],popularRank:34,courses:{
+    "Medicine / Surgery":{minPoints:13,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Pharmacy":{minPoints:12,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Nursing":{minPoints:11,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
+    "Law":{minPoints:11,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+  }},
+  {name:"Godfrey Okoye University",shortName:"GO Uni",tier:3,type:"Private",location:"Enugu, Enugu",state:"Enugu",acceptsJUPEB:true,searchAliases:["godfrey okoye","go uni","gouni","enugu private","gou"],popularRank:35,courses:{
+    "Law":{minPoints:11,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+  }},
+  {name:"Gregory University",shortName:"GUU",tier:3,type:"Private",location:"Uturu, Abia",state:"Abia",acceptsJUPEB:true,searchAliases:["gregory","guu","uturu","abia private"],popularRank:43,courses:{
+    "Law":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+  }},
+  {name:"Veritas University",shortName:"VERITAS",tier:3,type:"Private",location:"Abuja, FCT",state:"FCT",acceptsJUPEB:true,searchAliases:["veritas","abuja private","fct private"],popularRank:44,courses:{
+    "Law":{minPoints:11,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Philosophy":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","CRS"]},
+  }},
+  {name:"Mountain Top University",shortName:"MTU",tier:3,type:"Private",location:"Ibafo, Ogun",state:"Ogun",acceptsJUPEB:true,searchAliases:["mountain top","mtu","ibafo","ogun private","mtu ogun"],popularRank:45,courses:{
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Nursing":{minPoints:10,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
+  }},
+  {name:"Joseph Ayo Babalola University",shortName:"JABU",tier:3,type:"Private",location:"Ikeji-Arakeji, Osun",state:"Osun",acceptsJUPEB:true,searchAliases:["jabu","joseph ayo babalola","ikeji","osun private","jab university"],popularRank:46,courses:{
+    "Law":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Nursing":{minPoints:10,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
+  }},
+  {name:"Adeleke University",shortName:"Adeleke",tier:3,type:"Private",location:"Ede, Osun",state:"Osun",acceptsJUPEB:true,searchAliases:["adeleke","ede osun","osun private 2"],popularRank:47,courses:{
+    "Law":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+  }},
+  {name:"Caritas University",shortName:"Caritas",tier:3,type:"Private",location:"Amorji-Nike, Enugu",state:"Enugu",acceptsJUPEB:true,searchAliases:["caritas","amorji","enugu catholic","caritas enugu"],popularRank:48,courses:{
+    "Law":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+  }},
+  {name:"Elizade University",shortName:"Elizade",tier:3,type:"Private",location:"Ilara-Mokin, Ondo",state:"Ondo",acceptsJUPEB:true,searchAliases:["elizade","ilara mokin","ondo private 2"],popularRank:49,courses:{
+    "Law":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+  }},
+  {name:"Kings University",shortName:"Kings",tier:3,type:"Private",location:"Ode-Omu, Osun",state:"Osun",acceptsJUPEB:true,searchAliases:["kings university","ode omu","kings osun"],popularRank:50,courses:{
+    "Computer Science":{minPoints:9,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+  }},
   {name:"Covenant University",shortName:"Covenant",tier:3,type:"Private",location:"Ota, Ogun",state:"Ogun",acceptsJUPEB:false,searchAliases:["covenant","ota","winners"],popularRank:99,jupebWarning:"Covenant University runs its own foundation programme and does not currently accept JUPEB through the standard pathway. Check their admissions portal directly.",courses:{}},
   {name:"Pan-Atlantic University",shortName:"PAU",tier:3,type:"Private",location:"Lagos",state:"Lagos",acceptsJUPEB:false,searchAliases:["pau","pan atlantic","lagos business school"],popularRank:99,jupebWarning:"Pan-Atlantic University does not currently accept JUPEB. Consider their direct entry options.",courses:{}},
   {name:"American University of Nigeria",shortName:"AUN",tier:3,type:"Private",location:"Yola, Adamawa",state:"Adamawa",acceptsJUPEB:false,searchAliases:["aun","american university","yola"],popularRank:99,jupebWarning:"AUN follows a US-style admissions process and does not currently accept JUPEB.",courses:{}},
@@ -864,7 +1002,6 @@ const getTierLabel=tier=>tier===1?"🔥 Elite Federal":tier===2?"⭐ State Unive
 const searchUniversities=(query,courseFilter=null)=>{
   const q=(query||"").trim().toLowerCase();
   return UNIVERSITIES_DATA.filter(u=>{
-    if(courseFilter&&!u.courses[courseFilter]&&u.acceptsJUPEB)return false;
     if(!q)return true;
     return(
       u.name.toLowerCase().includes(q)||
@@ -873,7 +1010,14 @@ const searchUniversities=(query,courseFilter=null)=>{
       (u.state||"").toLowerCase().includes(q)||
       (u.searchAliases||[]).some(a=>a.toLowerCase().includes(q))
     );
-  }).sort((a,b)=>(a.popularRank||99)-(b.popularRank||99));
+  }).sort((a,b)=>{
+    // Course-matching universities come first
+    const aMatch=courseFilter?!!a.courses[courseFilter]:true;
+    const bMatch=courseFilter?!!b.courses[courseFilter]:true;
+    if(aMatch&&!bMatch)return -1;
+    if(!aMatch&&bMatch)return 1;
+    return(a.popularRank||99)-(b.popularRank||99);
+  });
 };
 const IDB = {
   _db: null,
@@ -3027,7 +3171,7 @@ function OnboardScreen({user,onDone,dark,setDark,T}){
 
 
 // ─── INTELLIGENCE SCREEN ─────────────────────────────────────────────────────
-function IntelligenceScreen({user,history,onBack,onNav,T}){
+function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
   const daysLeft=daysUntil("2026-08-03");
   const intel=calcReadinessScore(history,user,daysLeft);
   const actions=calcNextActions(history,user,intel);
@@ -3161,6 +3305,35 @@ function IntelligenceScreen({user,history,onBack,onNav,T}){
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Premium upsell — shown to non-premium users */}
+        {!user?.isPremium&&(
+          <div style={{background:"linear-gradient(135deg,rgba(0,75,59,0.4),rgba(138,106,30,0.3))",
+            border:"1px solid rgba(184,151,62,0.35)",borderRadius:14,padding:"20px",marginBottom:14}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:8}}>🔒 PREMIUM MEMBERS ALSO GET</div>
+            {[
+              "Unlimited drill sessions — practice weak topics every day",
+              "Full subject-by-subject topic breakdown",
+              "Priority weak-topic targeting with personalized drill sequences",
+              "Your score improvement tracked session by session",
+            ].map((b,i)=>(
+              <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:8}}>
+                <span style={{color:"#4ade80",fontSize:12,flexShrink:0,marginTop:1}}>✓</span>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.6)",lineHeight:1.7}}>{b}</span>
+              </div>
+            ))}
+            <button onClick={onUpgrade} className="btn-press"
+              style={{width:"100%",marginTop:8,padding:"14px 0",border:"none",borderRadius:10,
+                background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
+                color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,
+                fontWeight:700,cursor:"pointer",letterSpacing:"0.01em"}}>
+              Unlock Full Recovery Plan — ₦3,500
+            </button>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.25)",textAlign:"center",marginTop:8}}>
+              One payment · {daysLeft} days of unlimited access
+            </div>
           </div>
         )}
 
@@ -3669,6 +3842,34 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.7,flex:1}}>{topAction.text}</div>
                 </div>
               )}
+
+              {/* ── LOCKED RECOVERY PLAN — HIGH/CRITICAL non-premium ── */}
+              {!user?.isPremium&&(intel.risk==="HIGH"||intel.risk==="CRITICAL")&&(
+                <div style={{position:"relative",marginBottom:10,borderRadius:10,overflow:"hidden",border:"1px solid rgba(239,68,68,0.3)"}}>
+                  {/* Blurred content */}
+                  <div style={{padding:"12px",filter:"blur(3px)",userSelect:"none",pointerEvents:"none",background:"rgba(239,68,68,0.05)"}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#ef4444",letterSpacing:"0.1em",marginBottom:8}}>📋 YOUR RECOVERY PLAN</div>
+                    {["Fix Radioactivity — 11 targeted questions","Practice Chemistry daily for 6 days","Skip Mixed until accuracy hits 55%"].map((t,i)=>(
+                      <div key={i} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.5)",marginBottom:4,display:"flex",gap:6}}>
+                        <span>→</span><span>{t}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Lock overlay */}
+                  <div style={{position:"absolute",inset:0,background:"rgba(4,13,7,0.6)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,backdropFilter:"blur(1px)"}}>
+                    <div style={{fontSize:18}}>🔒</div>
+                    <button onClick={onUpgrade} className="btn-press"
+                      style={{padding:"9px 20px",border:"none",borderRadius:8,
+                        background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
+                        color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:9,
+                        fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
+                      Unlock Recovery Plan — ₦3,500
+                    </button>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.3)"}}>Personalized to your exact weak spots</div>
+                  </div>
+                </div>
+              )}
+
               <button onClick={()=>onNav("intelligence")}
                 style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",padding:0,letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:4}}>
                 FULL ANALYSIS →
@@ -4910,7 +5111,7 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
 function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();}
 
 // ─── RESULTS SCREEN ───────────────────────────────────────────────────────────
-function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,T}) {
+function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,T,onUpgrade}) {
   const {subject,year,correct,total,pct,wrongTopics,questionResults,mode,preReadiness=0,postReadiness=0,hitLimit=false,confidence=null}=result;
   const readinessDelta=postReadiness-preReadiness;
   const g=grade(pct),gc=gradeColor(g,T);
@@ -5171,6 +5372,28 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
               <Target size={12}/> FIX {wrongTopics[0].toUpperCase().slice(0,22)} NOW →
             </button>
           </div>
+        )}
+
+        {/* ── CONVERSION HOOK — bad score, non-premium ── */}
+        {!user?.isPremium&&pct<50&&(
+          <motion.div className="fi4" initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:0.6,ease:[0.16,1,0.3,1]}}
+            style={{background:"rgba(0,75,59,0.15)",border:"1px solid rgba(184,151,62,0.3)",
+              borderRadius:12,padding:"16px",marginBottom:12}}>
+            <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:6}}>
+              <span style={{fontSize:14}}>📈</span>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",fontWeight:700}}>YOU SCORED {pct}%</div>
+            </div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,color:"rgba(247,243,236,0.85)",lineHeight:1.5,marginBottom:10}}>
+              Premium students in this position improve an average of <span style={{color:"#4ade80",fontWeight:700}}>21 points</span> in 2 weeks — with targeted drills on their exact weak spots.
+            </div>
+            <button onClick={onUpgrade} className="btn-press"
+              style={{width:"100%",padding:"12px 0",border:"none",borderRadius:9,
+                background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
+                color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:10,
+                fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
+              Unlock My Recovery Plan — ₦3,500 →
+            </button>
+          </motion.div>
         )}
 
         <div className="fi5" style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -5820,6 +6043,53 @@ function AmbassadorScreen({user,onBack,T}) {
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:10}}>Code: <span style={{color:T.gold,fontWeight:700}}>{user?.referralCode}</span> — works via link or manual entry at signup</div>
         </div>
 
+        {/* Monthly earnings statement */}
+        {(()=>{
+          const now=new Date();
+          const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
+          const thisMonthPaid=(signupsList||[]).filter(s=>s.isPaid&&s.date&&new Date(s.date)>=monthStart).length;
+          const monthEarnings=thisMonthPaid*500;
+          const monthName=now.toLocaleString("en-NG",{month:"long"});
+          return(
+            <div className="fi2" style={{background:"rgba(167,139,250,0.07)",border:"1px solid rgba(167,139,250,0.25)",borderRadius:10,padding:"14px 16px",marginBottom:16}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#a78bfa",letterSpacing:"0.12em",marginBottom:4}}>💜 {monthName.toUpperCase()} EARNINGS</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:900,color:"#a78bfa"}}>₦{monthEarnings.toLocaleString()}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:2}}>{thisMonthPaid} premium conversion{thisMonthPaid!==1?"s":""} · ₦500 each</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:"rgba(167,139,250,0.7)"}}>₦{(earnings).toLocaleString()}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>total all-time</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* WhatsApp message template */}
+        <div className="fi3" style={{background:"rgba(37,211,102,0.06)",border:"1px solid rgba(37,211,102,0.2)",borderRadius:10,padding:"14px 16px",marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#25D366",letterSpacing:"0.12em"}}>💬 READY-TO-SEND MESSAGE</div>
+            <button className="btn-press" onClick={()=>{
+              const msg=`My guy, JUPEB exam is coming and I've been using CrediQ — it's serious 🔥\n\nIt tracks your weak topics, gives you a readiness score, and shows you exactly where your marks are going.\n\nJoin with my link: ${referralLink}\n\nDon't come and fail when you had a free way to prepare.`;
+              navigator.clipboard?.writeText(msg).then(()=>{}).catch(()=>{});
+              if(navigator.share){navigator.share({title:"Join CrediQ",text:msg}).catch(()=>{});}
+              else{navigator.clipboard?.writeText(msg);}
+            }}
+              style={{padding:"5px 12px",background:"rgba(37,211,102,0.15)",border:"1px solid rgba(37,211,102,0.3)",
+                borderRadius:6,color:"#25D366",fontFamily:"'DM Mono',monospace",fontSize:8,cursor:"pointer",fontWeight:700}}>
+              COPY & SHARE
+            </button>
+          </div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.8,background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"10px 12px"}}>
+            My guy, JUPEB exam is coming and I've been using CrediQ — it's serious 🔥<br/><br/>
+            It tracks your weak topics, gives you a readiness score, and shows you exactly where your marks are going.<br/><br/>
+            Join with my link: <span style={{color:T.gold}}>{referralLink}</span><br/><br/>
+            Don't come and fail when you had a free way to prepare.
+          </div>
+        </div>
+
         {/* Signups list */}
         <div className="fi3" style={{marginBottom:16}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.1em",marginBottom:12}}>WHO SIGNED UP — {signupsList.length} student{signupsList.length!==1?"s":""}</div>
@@ -6000,20 +6270,21 @@ function WhyPremiumScreen({user,onBack,onUpgrade,T}) {
 
 // ─── AMBASSADOR APPLICATION SCREEN ────────────────────────────────────────────
 function AmbassadorApplicationScreen({user,T,onBack,showToast}){
-  const[department,setDepartment]=useState("");
-  const[year,setYear]=useState("");
+  const[center,setCenter]=useState("");
+  const[reach,setReach]=useState("");
   const[why,setWhy]=useState("");
+  const[isJupebStudent,setIsJupebStudent]=useState(false);
   const[loading,setLoading]=useState(false);
   const[submitted,setSubmitted]=useState(false);
-  const canSubmit=department.trim()&&year&&why.trim().length>=20;
+  const canSubmit=center.trim()&&reach&&why.trim().length>=20&&isJupebStudent;
   const doSubmit=async()=>{
     if(!canSubmit)return;
     setLoading(true);
     try{
       await setDoc(doc(db,"ambassadorApplications",user.uid),{
         name:user.name||"",email:user.email||"",school:user.targetUniversity||"",
-        department:department.trim(),yearLevel:year,whyMe:why.trim(),uid:user.uid,
-        status:"pending",appliedAt:serverTimestamp(),
+        jupebCenter:center.trim(),estimatedReach:reach,whyMe:why.trim(),uid:user.uid,
+        isJupebStudent:true,status:"pending",appliedAt:serverTimestamp(),
       });
       setSubmitted(true);
     }catch(e){showToast&&showToast("Couldn't submit — check connection.","error");}
@@ -6040,44 +6311,84 @@ function AmbassadorApplicationScreen({user,T,onBack,showToast}){
           <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
         </div>
         <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>Campus Ambassador</div>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginTop:3}}>One per department. Tell your guys, earn your rank.</div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginTop:3}}>JUPEB students only · one per center · tell your guys, earn your rank.</div>
       </div>
       <div style={{padding:"24px 20px",maxWidth:500,margin:"0 auto",width:"100%"}}>
+
+        {/* How it works */}
         <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"14px 16px",marginBottom:20}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:6}}>HOW IT WORKS</div>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.9}}>Apply → we review → you get your unique link → every student who joins via your link earns you ₦500 when they go Premium. No cap.</div>
         </div>
+
+        {/* JUPEB student confirmation — required */}
+        <div onClick={()=>setIsJupebStudent(!isJupebStudent)}
+          style={{display:"flex",alignItems:"flex-start",gap:12,padding:"14px 16px",
+            background:isJupebStudent?"rgba(74,222,128,0.07)":"rgba(239,68,68,0.05)",
+            border:`1px solid ${isJupebStudent?"rgba(74,222,128,0.3)":"rgba(239,68,68,0.2)"}`,
+            borderRadius:12,marginBottom:16,cursor:"pointer"}}>
+          <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${isJupebStudent?"#4ade80":"rgba(247,243,236,0.2)"}`,
+            background:isJupebStudent?"#4ade80":"transparent",flexShrink:0,marginTop:1,
+            display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s"}}>
+            {isJupebStudent&&<span style={{color:"#020D08",fontSize:12,fontWeight:900}}>✓</span>}
+          </div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:isJupebStudent?"rgba(247,243,236,0.85)":T.muted,lineHeight:1.7}}>
+            I confirm I am currently a <span style={{color:isJupebStudent?"#4ade80":T.gold,fontWeight:700}}>JUPEB 2025/2026 student</span> and I understand this program is for JUPEB students only.
+          </div>
+        </div>
+
+        {/* School — pre-filled */}
         <div style={{marginBottom:14}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YOUR SCHOOL</div>
           <div style={{padding:"12px 14px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold}}>{user.targetUniversity||"Not set — update profile first"}</div>
         </div>
+
+        {/* JUPEB Center */}
         <div style={{marginBottom:14}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YOUR DEPARTMENT / FACULTY <span style={{color:T.danger}}>*</span></div>
-          <input value={department} onChange={e=>setDepartment(e.target.value)} placeholder="e.g. Sciences — UNILAG Pre-Degree"
-            style={{width:"100%",padding:"12px 14px",background:T.surface,border:`1px solid ${department.trim()?T.gold:T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>JUPEB CENTER / TUTORIAL INSTITUTION <span style={{color:T.danger}}>*</span></div>
+          <input value={center} onChange={e=>setCenter(e.target.value)}
+            placeholder="e.g. UNILAG Pre-Degree Centre, Eko Tutorial"
+            style={{width:"100%",padding:"12px 14px",background:T.surface,
+              border:`1px solid ${center.trim()?T.gold:T.border}`,borderRadius:8,
+              color:T.text,fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",boxSizing:"border-box"}}/>
         </div>
+
+        {/* Estimated reach */}
         <div style={{marginBottom:14}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YEAR LEVEL <span style={{color:T.danger}}>*</span></div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>HOW MANY JUPEB STUDENTS CAN YOU PERSONALLY REACH? <span style={{color:T.danger}}>*</span></div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {["1st Year","2nd Year","3rd Year","4th Year+"].map(y=>(
-              <button key={y} onClick={()=>setYear(y)} style={{padding:"9px 16px",border:`1px solid ${year===y?T.gold:T.border}`,borderRadius:8,background:year===y?`${T.gold}15`:"transparent",color:year===y?T.gold:T.muted,fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer"}}>{y}</button>
+            {["Less than 20","20 – 50","50 – 100","100+"].map(r=>(
+              <button key={r} onClick={()=>setReach(r)}
+                style={{padding:"9px 16px",border:`1px solid ${reach===r?T.gold:T.border}`,borderRadius:8,
+                  background:reach===r?`${T.gold}15`:"transparent",color:reach===r?T.gold:T.muted,
+                  fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer",transition:"all .15s"}}>
+                {r}
+              </button>
             ))}
           </div>
         </div>
+
+        {/* Why them */}
         <div style={{marginBottom:24}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:4}}>WHY SHOULD WE PICK YOU? <span style={{color:T.danger}}>*</span></div>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}55`,marginBottom:8}}>Min. 20 chars · {200-why.length} remaining</div>
           <textarea value={why} onChange={e=>setWhy(e.target.value.slice(0,200))} rows={4}
-            placeholder="Your reach — how many JUPEB classmates you can connect with, student community involvement, etc."
-            style={{width:"100%",padding:"12px 14px",background:T.surface,border:`1px solid ${why.trim().length>=20?T.gold:T.border}`,borderRadius:8,color:T.text,fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}/>
+            placeholder="Your role in your class or center — class rep, tutorial group leader, big WhatsApp group, etc."
+            style={{width:"100%",padding:"12px 14px",background:T.surface,
+              border:`1px solid ${why.trim().length>=20?T.gold:T.border}`,borderRadius:8,
+              color:T.text,fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none",
+              resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}/>
         </div>
+
         <button onClick={doSubmit} disabled={!canSubmit||loading}
           style={{width:"100%",padding:"15px 0",border:"none",borderRadius:12,
             background:canSubmit?"linear-gradient(135deg,#004B3B,#8A6A1E)":"rgba(255,255,255,0.06)",
             color:canSubmit?"#F7F3EC":`${T.muted}60`,
-            fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:canSubmit?"pointer":"not-allowed"}}>
+            fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,
+            cursor:canSubmit?"pointer":"not-allowed"}}>
           {loading?"Submitting…":"Submit Application →"}
         </button>
+        {!isJupebStudent&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(239,68,68,0.6)",textAlign:"center",marginTop:8}}>Confirm you are a JUPEB student to continue</div>}
       </div>
     </div>
   );
@@ -7055,8 +7366,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>📍 {app.school||"—"}</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>🎓 {app.yearLevel||"—"}</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,gridColumn:"1/-1"}}>🏛️ {app.department||"—"}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>👥 Reach: {app.estimatedReach||"—"}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,gridColumn:"1/-1"}}>🏛️ {app.jupebCenter||app.department||"—"}</div>
                     </div>
                     {app.whyMe&&(
                       <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>
@@ -8240,7 +8551,7 @@ export default function App() {
             onStart={()=>{if(user.subjects)loadQuestions(user.subjects);setScreen("setup");}}
             onLater={()=>setScreen("dashboard")}/>}
           {screen==="apply-ambassador"&&user&&<AmbassadorApplicationScreen user={user} T={T} onBack={()=>setScreen("profile")} showToast={show}/>}
-          {screen==="intelligence"&&user&&<IntelligenceScreen user={user} history={history} T={T} onBack={()=>setScreen("dashboard")} onNav={handleNav}/>}
+          {screen==="intelligence"&&user&&<IntelligenceScreen user={user} history={history} T={T} onBack={()=>setScreen("dashboard")} onNav={handleNav} onUpgrade={()=>setShowPremiumGate(true)}/>}
 
           {screen==="dashboard"&&user&&(
             !historyLoaded?<DashboardSkeleton T={T}/>:
@@ -8251,7 +8562,7 @@ export default function App() {
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
-          {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T}/>}
+          {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {screen==="ambassador"&&user&&<AmbassadorScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {/* WhyPremium: redirect premium users to dashboard */}

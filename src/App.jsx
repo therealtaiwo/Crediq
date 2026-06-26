@@ -4772,8 +4772,6 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
     setAnswers(a=>({...a,[current]:opt}));
     setLastAnswer(opt);
     setTimeout(()=>setLastAnswer(null),300);
-    // Only auto-advance on FIRST answer — allow changes before moving on
-    if(isNew&&current<totalQ-1)setTimeout(()=>setCurrent(c=>c+1),500);
   };
 
   return (

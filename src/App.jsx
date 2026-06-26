@@ -3639,6 +3639,44 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   const [expandedSubject,setExpandedSubject]=useState(null);
   const [displayPoints,setDisplayPoints]=useState(0);
   const [competitionData,setCompetitionData]=useState(null);
+  const [benchmarks,setBenchmarks]=useState(null);
+
+  // Load community benchmarks (one doc, all subjects) — best-effort
+  useEffect(()=>{
+    if(!userSubjects.length)return;
+    getDoc(doc(db,"benchmarks","subjects")).then(snap=>{
+      if(snap.exists())setBenchmarks(snap.data());
+    }).catch(()=>{});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[userSubjects.join(",")]);
+
+  // Average accuracy for a subject across all users (needs ≥10 sessions to show)
+  const getSubBenchmark=(subject)=>{
+    if(!benchmarks)return null;
+    const key=subject.replace(/[\s/]/g,"_");
+    const total=benchmarks[`${key}_total`];
+    const count=benchmarks[`${key}_count`];
+    if(!total||!count||count<10)return null;
+    return Math.round(total/count);
+  };
+
+  // Trajectory — project readiness to exam day based on improvement rate
+  const trajectory=useMemo(()=>{
+    if(history.length<4)return null;
+    const current=calcReadiness(history)||0;
+    const midIdx=Math.floor(history.length/2);
+    const early=calcReadiness(history.slice(0,midIdx))||0;
+    const sessionsInSecondHalf=history.length-midIdx;
+    const gainPerSession=sessionsInSecondHalf>0?(current-early)/sessionsInSecondHalf:0;
+    if(gainPerSession<0.5)return null; // flat or declining — don't project
+    const dates=history.map(h=>new Date(h.date)).sort((a,b)=>a-b);
+    const daySpan=Math.max(1,(dates[dates.length-1]-dates[0])/(1000*60*60*24));
+    const sessionsPerDay=history.length/daySpan;
+    const projectedExtra=Math.round(gainPerSession*sessionsPerDay*daysLeft);
+    const projected=Math.min(100,Math.round(current+projectedExtra));
+    if(projected<=current+1)return null; // not meaningfully different
+    return{projected,gainPerSession:Math.round(gainPerSession*10)/10};
+  },[history,daysLeft]);
   const hasData=history.length>0;
   const firstName=user.name?.split(" ")[0]||"";
   // First session activation — show once per user
@@ -3846,6 +3884,16 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                   </div>
                 ))}
               </div>
+              {/* Trajectory projection */}
+              {trajectory&&(
+                <div style={{background:"rgba(74,222,128,0.05)",border:"1px solid rgba(74,222,128,0.18)",borderRadius:8,padding:"7px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"rgba(74,222,128,0.5)",letterSpacing:"0.1em"}}>EXAM DAY PROJECTION</div>
+                  <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+                    <span style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:900,color:"#4ade80"}}>{trajectory.projected}</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"rgba(74,222,128,0.4)"}}>/100 · +{trajectory.gainPerSession}pts/session</span>
+                  </div>
+                </div>
+              )}
               {/* Top action */}
               {topAction&&(
                 <div style={{background:"rgba(255,255,255,0.03)",border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:10,alignItems:"flex-start"}}>
@@ -4204,6 +4252,23 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                               </div>
                             )}
                           </div>
+                          {/* Community benchmark */}
+                          {(()=>{
+                            const avg=getSubBenchmark(row.subject);
+                            if(avg===null||row.avg===null)return null;
+                            const diff=row.avg-avg;
+                            const ahead=diff>0;
+                            return(
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"rgba(255,255,255,0.03)",borderRadius:7,padding:"6px 10px",marginBottom:10}}>
+                                <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.muted,letterSpacing:"0.08em"}}>VS COMMUNITY AVG</div>
+                                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>{avg}%</span>
+                                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:ahead?"#4ade80":"#f97316",fontWeight:700}}>{ahead?`+${diff}`:`${diff}`}%</span>
+                                  <span style={{fontSize:9}}>{ahead?"↑":"↓"}</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           {subBlockers&&subBlockers.blockers.length>0&&(
                             <div style={{marginBottom:10}}>
                               <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(239,68,68,0.55)",letterSpacing:"0.12em",marginBottom:6}}>TOPIC MAP</div>
@@ -8437,6 +8502,15 @@ export default function App() {
         // Phase 5 seed: daily session aggregate — makes community counter real over time
         const todayStr=new Date().toISOString().split("T")[0];
         setDoc(doc(db,"dailyStats",todayStr),{sessions:increment(1),lastUpdated:todayStr},{merge:true}).catch(()=>{});
+
+        // Phase 2: community subject benchmark — one merged doc, one write per session
+        if(result.subject&&result.subject!=="mixed"&&result.mode!=="mixed"){
+          const subKey=result.subject.replace(/[\s/]/g,"_");
+          setDoc(doc(db,"benchmarks","subjects"),{
+            [`${subKey}_total`]:increment(result.pct),
+            [`${subKey}_count`]:increment(1),
+          },{merge:true}).catch(()=>{});
+        }
 
         // ── MARKET MOAT: aggregate anonymised topic failure data ──────────────
         // Each wrong topic gets a counter. Over time this reveals which questions

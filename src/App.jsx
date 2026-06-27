@@ -6476,6 +6476,10 @@ function AmbassadorApplicationScreen({user,T,onBack,showToast}){
 
 // ─── PROFILE SCREEN ───────────────────────────────────────────────────────────
 // ─── FOUNDER DASHBOARD ────────────────────────────────────────────────────────
+// Module-level cache — reopening dashboard costs 0 reads within 5 min
+let _founderCache=null;
+let _founderCacheTime=0;
+const FOUNDER_CACHE_TTL=5*60*1000;
 function FounderDashboardScreen({onBack,T,showToast}){
   const[tab,setTab]=useState("analytics"); // analytics | users | churn | email
   const[stats,setStats]=useState(null);
@@ -6507,9 +6511,17 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const isDesktop=useIsDesktop(900);
 
   const load=useCallback(async(isRefresh)=>{
+    // Use cache if fresh and not a manual refresh
+    if(!isRefresh && _founderCache && (Date.now()-_founderCacheTime)<FOUNDER_CACHE_TTL){
+      setAllUsers(_founderCache.allUsers);
+      setStats(_founderCache.stats);
+      setAllAmbassadors(_founderCache.allAmbassadors);
+      setApplications(_founderCache.applications);
+      setLoading(false);return;
+    }
     isRefresh?setRefreshing(true):setLoading(true);
     try{
-      const usersSnap=await getDocs(collection(db,"users"));
+      const usersSnap=await getDocs(query(collection(db,"users"),limit(500)));
       const users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
       setAllUsers(users);
       // Test accounts are excluded from every business metric below — they're
@@ -6526,7 +6538,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
       const heardMap={};realUsers.forEach(u=>{if(u.referralSource){heardMap[u.referralSource]=(heardMap[u.referralSource]||0)+1;}});
       const topHeard=Object.entries(heardMap).sort((a,b)=>b[1]-a[1]);
       const topicMap={};
-      const sessSnap=await getDocs(collection(db,"sessions"));
+      const sessSnap=await getDocs(query(collection(db,"sessions"),limit(1000)));
       sessSnap.docs.forEach(d=>{(d.data().wrongTopics||[]).forEach(t=>{topicMap[t]=(topicMap[t]||0)+1;});});
       const topWeakTopics=Object.entries(topicMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
       const ambassSnap=await getDocs(collection(db,"ambassadors"));
@@ -6564,6 +6576,9 @@ function FounderDashboardScreen({onBack,T,showToast}){
         const apps=appSnap.docs.map(d=>({uid:d.id,...d.data()}));
         setApplications(apps.sort((a,b)=>(b.appliedAt?.seconds||0)-(a.appliedAt?.seconds||0)));
       }catch{}
+      // Cache the data
+      _founderCache={allUsers:users,stats:{total,premium,conversion,activeToday,sessionsCompleted,topSchools,topWeakTopics,topHeard,totalAmbassadors,totalReferred,totalPremiumReferrals,totalPayouts,topAmbassadors,revenueByDay,totalRevenue:premium*2500,testAccountCount,funnel},allAmbassadors:sortedAmbassadors.map(a=>({code:a.code||a.id,name:a.name||"",referred:a.totalReferrals||0,premium:a.premiumReferrals||0,earned:a.earnings||0,clicks:a.clicks||0,email:a.email||"",uid:a.uid||""})),applications:[]};
+      _founderCacheTime=Date.now();
       setError("");
     }catch(e){setError(e?.message||"Check Firestore rules — founder email needs read access.");}
     finally{setLoading(false);setRefreshing(false);}

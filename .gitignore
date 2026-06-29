@@ -30,3 +30,4 @@ serviceAccountKey.json
 .env.local
 test.py
 serviceAccount.json
+serviceAccount.json

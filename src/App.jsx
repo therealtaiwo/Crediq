@@ -460,7 +460,7 @@ const UNIVERSITIES_DATA=[
     "Mass Communication":{minPoints:12,label:"Moderate",combination:["Literature in English","Government","Economics"]},
     "Nursing":{minPoints:13,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
   }},
-  {name:"University of Ibadan",shortName:"UI",tier:1,type:"Federal",location:"Ibadan, Oyo",state:"Oyo",acceptsJUPEB:true,searchAliases:["ibadan","u.i"],popularRank:2,courses:{
+  {name:"University of Ibadan",shortName:"UI",tier:1,type:"Federal",location:"Ibadan, Oyo",state:"Oyo",acceptsJUPEB:false,searchAliases:["ibadan","u.i"],popularRank:2,courses:{
     "Medicine / Surgery":{minPoints:15,label:"Highly Competitive",combination:["Biology","Chemistry","Physics"]},
     "Law":{minPoints:14,label:"Highly Competitive",combination:["Literature in English","Government","Economics"]},
     "Engineering":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
@@ -985,6 +985,24 @@ const UNIVERSITIES_DATA=[
     "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
   }},
   {name:"Kings University",shortName:"Kings",tier:3,type:"Private",location:"Ode-Omu, Osun",state:"Osun",acceptsJUPEB:true,searchAliases:["kings university","ode omu","kings osun"],popularRank:50,courses:{
+    "Medicine / Surgery":{minPoints:13,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Law":{minPoints:11,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Computer Science":{minPoints:10,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Accounting":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+  }},
+  {name:"Federal University Lafia",shortName:"FUL",tier:2,type:"Federal",location:"Lafia, Nasarawa",state:"Nasarawa",acceptsJUPEB:true,searchAliases:["ful","lafia","nasarawa","federal university lafia"],popularRank:51,courses:{
+    "Medicine / Surgery":{minPoints:13,label:"Competitive",combination:["Biology","Chemistry","Physics"]},
+    "Law":{minPoints:12,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Engineering":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Computer Science":{minPoints:11,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
+    "Pharmacy":{minPoints:12,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
+    "Accounting":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
+    "Economics":{minPoints:10,label:"Moderate",combination:["Mathematics","Economics","Government"]},
+    "Mass Communication":{minPoints:10,label:"Moderate",combination:["Literature in English","Government","Economics"]},
+    "Nursing":{minPoints:11,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
+    "Agricultural Science":{minPoints:10,label:"Moderate",combination:["Biology","Chemistry","Agricultural Science"]},
+  }},
     "Computer Science":{minPoints:9,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
     "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
     "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},

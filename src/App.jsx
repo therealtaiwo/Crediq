@@ -1003,11 +1003,6 @@ const UNIVERSITIES_DATA=[
     "Nursing":{minPoints:11,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
     "Agricultural Science":{minPoints:10,label:"Moderate",combination:["Biology","Chemistry","Agricultural Science"]},
   }},
-    "Computer Science":{minPoints:9,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
-    "Accounting":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Accounting"]},
-    "Economics":{minPoints:9,label:"Moderate",combination:["Mathematics","Economics","Government"]},
-    "Mass Communication":{minPoints:9,label:"Moderate",combination:["Literature in English","Government","Economics"]},
-  }},
   {name:"Covenant University",shortName:"Covenant",tier:3,type:"Private",location:"Ota, Ogun",state:"Ogun",acceptsJUPEB:false,searchAliases:["covenant","ota","winners"],popularRank:99,jupebWarning:"Covenant University runs its own foundation programme and does not currently accept JUPEB through the standard pathway. Check their admissions portal directly.",courses:{}},
   {name:"Pan-Atlantic University",shortName:"PAU",tier:3,type:"Private",location:"Lagos",state:"Lagos",acceptsJUPEB:false,searchAliases:["pau","pan atlantic","lagos business school"],popularRank:99,jupebWarning:"Pan-Atlantic University does not currently accept JUPEB. Consider their direct entry options.",courses:{}},
   {name:"American University of Nigeria",shortName:"AUN",tier:3,type:"Private",location:"Yola, Adamawa",state:"Adamawa",acceptsJUPEB:false,searchAliases:["aun","american university","yola"],popularRank:99,jupebWarning:"AUN follows a US-style admissions process and does not currently accept JUPEB.",courses:{}},
@@ -1173,6 +1168,18 @@ function calcMastery(history, subject) {
 
 const STEM_SUBJECTS=["Physics","Chemistry","Mathematics","Biology","Economics","Geography","Agriculture","English"];
 const RELIGIOUS_TERMS=["jahiliyyah","prophet","muhammad","quran","allah","islamic","madinah","makkah","mecca","medina","hadith","sunnah","caliphate","hijra","ukaz","taif","arafah","mosque","siffin","khadijah","uthman","abubakar","imam bukhari","nawawi","surah","umrah","hajj","salat","zakat","tawhid","shirk","aqeedah","baptism","crucifixion","apostle","genesis","exodus","deuteronomy","leviticus","old testament","new testament","holy ghost","holy spirit","ten commandments","passover","resurrection of","sermon on the mount"];
+// Normalizes an answer key before comparison so formatting drift in question-bank
+// data (case, whitespace, stray punctuation like "A." or "a)") never silently
+// marks a genuinely correct answer as wrong.
+function normAnswerKey(a){
+  if(a===undefined||a===null)return "";
+  const s=String(a).trim().toUpperCase();
+  const m=s.match(/^([A-D])/); // grab leading option letter if present amid punctuation
+  return m?m[1]:s;
+}
+function answersMatch(userAnswer,correctAnswer){
+  return normAnswerKey(userAnswer)===normAnswerKey(correctAnswer);
+}
 function isUsableQuestion(q){
   if(q.hasDiagram===true&&!q.diagramUrl)return false;
   if(STEM_SUBJECTS.includes(q.subject||"")){
@@ -4421,7 +4428,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
 }
 
 // ─── SETUP SCREEN (lazy loads questions) ─────────────────────────────────────
-function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T}) {
+function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory}) {
   const userSubjects=user.subjects||[];
   const [subject,setSubject]=useState(()=>userSubjects[0]||"mixed");
   const [courseUnit,setCourseUnit]=useState(null); // null = all units
@@ -4609,16 +4616,19 @@ function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T}) {
           ))}
         </div>
 
-        {/* Theory Questions — Coming Soon */}
-        <div style={{marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px dashed ${T.border}`,borderRadius:9,opacity:0.55,cursor:"default"}}>
+        {/* Theory Questions */}
+        <button className="btn-press" onClick={onTheory}
+          style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"pointer",textAlign:"left"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div>
-              <div style={{fontSize:14,color:T.muted,fontWeight:400}}>Theory Questions</div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}60`,marginTop:3}}>Essay · Short Answer · Structured</div>
+              <div style={{fontSize:14,color:T.text,fontWeight:500,display:"flex",alignItems:"center",gap:8}}>
+                <BookOpen size={15} color={T.gold}/>Theory Questions
+              </div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Essay · Short Answer · Structured</div>
             </div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.gold,letterSpacing:"0.12em",background:"rgba(184,151,62,0.08)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"3px 9px",flexShrink:0}}>COMING SOON</div>
+            <ChevronRight size={16} color={T.muted}/>
           </div>
-        </div>
+        </button>
 
         {qCount===0?(
           <div style={{background:`${T.danger}08`,border:`1px solid ${T.danger}25`,borderRadius:10,padding:"16px 18px",textAlign:"center"}}>
@@ -4807,7 +4817,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
     const duration=Math.round((Date.now()-startTime)/1000);
     let correct=0;const wrongTopics=[];
     const qResults=questions.map((q,i)=>{
-      const ua=latestAnswers[i];const ok=ua===q.correctAnswer;
+      const ua=latestAnswers[i];const ok=answersMatch(ua,q.correctAnswer);
       if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
       return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua||null,correctAnswer:q.correctAnswer,explanation:q.explanation||""};
     });
@@ -4835,7 +4845,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
           .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
           .map(([idx,ua])=>{
             const q=questions[parseInt(idx)];
-            const ok=ua===q.correctAnswer;
+            const ok=answersMatch(ua,q.correctAnswer);
             if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
             return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua,correctAnswer:q.correctAnswer,explanation:q.explanation||"",timeSpent:0};
           });
@@ -7852,6 +7862,379 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
   );
 }
 
+
+// ─── THEORY SCREEN ────────────────────────────────────────────────────────────
+function TheoryScreen({user,onEnd,onBack,T}){
+  const[phase,setPhase]=useState("setup");
+  const[subject,setSubject]=useState(user.subjects?.[0]||"");
+  const[year,setYear]=useState("all");
+  const[paper,setPaper]=useState(0);
+  const[questions,setQuestions]=useState([]);
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState("");
+  const[idx,setIdx]=useState(0);
+  const[marks,setMarks]=useState({});
+  const[revealed,setRevealed]=useState(new Set());
+  const[result,setResult]=useState(null);
+  const[lightboxUrl,setLightboxUrl]=useState(null);
+  const startRef=useRef(Date.now());
+
+  const YEARS=[2019,2020,2021,2022,2024,2025];
+  const subjectList=user.subjects||[];
+
+  const loadQs=async()=>{
+    if(!subject){setErr("Select a subject first");return;}
+    setLoading(true);setErr("");
+    try{
+      const conds=[where("examType","==","THEORY"),where("subject","==",subject),limit(40)];
+      if(year!=="all")conds.push(where("year","==",parseInt(year)));
+      const snap=await getDocs(query(collection(db,"theoryQuestions"),...conds));
+      let qs=snap.docs.map(d=>({id:d.id,...d.data()}));
+      if(paper!==0)qs=qs.filter(q=>q.paperNumber===paper);
+      if(!qs.length){setErr("No theory questions found. Try All Years or a different subject.");setLoading(false);return;}
+      setQuestions(qs);setIdx(0);setMarks({});setRevealed(new Set());
+      startRef.current=Date.now();
+      setPhase("practice");
+    }catch{setErr("Failed to load. Check connection.");}
+    finally{setLoading(false);}
+  };
+
+  const q=questions[idx];
+
+  const setMark=(qId,part,val)=>setMarks(prev=>({...prev,[qId]:{...(prev[qId]||{}),[part]:val}}));
+  const toggleReveal=(qId)=>setRevealed(prev=>{const s=new Set(prev);s.has(qId)?s.delete(qId):s.add(qId);return s;});
+
+  const canNext=()=>{
+    if(!q)return false;
+    const sqs=q.subQuestions||[];
+    if(!sqs.length)return revealed.has(q.id);
+    const qm=marks[q.id]||{};
+    return sqs.every(sq=>qm[sq.part]);
+  };
+
+  const finish=()=>{
+    const duration=Math.round((Date.now()-startRef.current)/1000);
+    let totalM=0,earnedM=0;
+    questions.forEach(qn=>{
+      (qn.subQuestions||[{part:"a",marks:qn.totalMarks||10}]).forEach(sq=>{
+        const m=sq.marks||1;totalM+=m;
+        const mk=(marks[qn.id]||{})[sq.part];
+        if(mk==="got")earnedM+=m;
+        else if(mk==="partial")earnedM+=m*0.5;
+      });
+    });
+    const r={subject,year:year==="all"?"mixed":parseInt(year),paper,questionCount:questions.length,
+      totalMarks:totalM,earnedMarks:Math.round(earnedM),
+      pct:totalM>0?Math.round((earnedM/totalM)*100):0,
+      duration,date:new Date().toISOString(),marks};
+    setResult(r);onEnd(r);setPhase("summary");
+  };
+
+  const handleNext=()=>{
+    if(idx<questions.length-1)setIdx(i=>i+1);
+    else finish();
+  };
+
+  // ── SETUP ──
+  if(phase==="setup"){
+    return(
+      <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"20px 20px 0"}}>
+          <button onClick={onBack} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}><ChevronLeft size={22}/></button>
+          <div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.14em",marginBottom:2}}>THEORY PRACTICE</div>
+            <div style={{fontSize:18,fontWeight:700,letterSpacing:-0.3}}>Essay & Structured Questions</div>
+          </div>
+        </div>
+
+        <div style={{flex:1,padding:"24px 20px",overflowY:"auto"}}>
+          {/* Subject */}
+          <div style={{marginBottom:20}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>SUBJECT</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {subjectList.map(s=>(
+                <button key={s} onClick={()=>setSubject(s)}
+                  style={{padding:"12px 16px",borderRadius:10,border:`1px solid ${subject===s?T.gold:T.border}`,
+                    background:subject===s?"rgba(184,151,62,0.1)":T.surface,color:subject===s?T.gold:T.text,
+                    cursor:"pointer",textAlign:"left",fontSize:14,fontWeight:subject===s?600:400,
+                    display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  {s}
+                  {subject===s&&<CheckCircle size={16} color={T.gold}/>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Year */}
+          <div style={{marginBottom:20}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YEAR</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {["all",...YEARS].map(y=>(
+                <button key={y} onClick={()=>setYear(String(y))}
+                  style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${String(year)===String(y)?T.gold:T.border}`,
+                    background:String(year)===String(y)?"rgba(184,151,62,0.1)":T.surface,
+                    color:String(year)===String(y)?T.gold:T.text,cursor:"pointer",
+                    fontFamily:"'DM Mono',monospace",fontSize:11}}>
+                  {y==="all"?"All Years":y}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Paper */}
+          <div style={{marginBottom:28}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>PAPER</div>
+            <div style={{display:"flex",gap:8}}>
+              {[{v:0,l:"All Papers"},{v:1,l:"Paper 1"},{v:2,l:"Paper 2"}].map(p=>(
+                <button key={p.v} onClick={()=>setPaper(p.v)}
+                  style={{flex:1,padding:"10px 0",borderRadius:8,border:`1px solid ${paper===p.v?T.gold:T.border}`,
+                    background:paper===p.v?"rgba(184,151,62,0.1)":T.surface,
+                    color:paper===p.v?T.gold:T.text,cursor:"pointer",
+                    fontFamily:"'DM Mono',monospace",fontSize:10}}>
+                  {p.l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {err&&<div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#f87171",marginBottom:16}}>{err}</div>}
+
+          <button onClick={loadQs} disabled={loading||!subject}
+            style={{width:"100%",padding:"14px",borderRadius:10,border:"none",
+              background:(!subject||loading)?"rgba(184,151,62,0.3)":T.gold,
+              color:(!subject||loading)?"rgba(247,243,236,0.4)":"#1a1209",
+              fontWeight:700,fontSize:15,cursor:(!subject||loading)?"not-allowed":"pointer",
+              fontFamily:"'DM Mono',monospace",letterSpacing:"0.04em"}}>
+            {loading?"Loading Questions...":"Begin Theory Practice →"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PRACTICE ──
+  if(phase==="practice"&&q){
+    const sqs=q.subQuestions||[];
+    const qm=marks[q.id]||{};
+    const isRevealed=revealed.has(q.id);
+    const markColor={got:T.success,partial:"#f59e0b",missed:T.danger};
+    const markLabel={got:"✓ Got it",partial:"~ Partial","missed":"✗ Missed"};
+
+    return(
+      <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
+        {/* Header */}
+        <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={()=>setPhase("setup")} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:4}}><ChevronLeft size={20}/></button>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em"}}>{subject.toUpperCase()} · THEORY</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+              <div style={{flex:1,height:3,borderRadius:2,background:T.border}}>
+                <div style={{height:"100%",borderRadius:2,background:T.gold,width:`${((idx+1)/questions.length)*100}%`,transition:"width .3s"}}/>
+              </div>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,flexShrink:0}}>Q{idx+1}/{questions.length}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+          {/* Topic badge */}
+          {q.topic&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:10,background:"rgba(184,151,62,0.08)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"3px 10px",display:"inline-block"}}>{q.topic.toUpperCase()}</div>}
+
+          {/* Year/Paper badge */}
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginBottom:14}}>{q.year} · Paper {q.paperNumber||1}{q.totalMarks?` · ${q.totalMarks} marks`:""}</div>
+
+          {/* Question text — only show if not empty */}
+          {q.question&&q.question.trim()&&(
+            <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`}}>
+              {q.question}
+            </div>
+          )}
+
+          {/* Diagram — full scanned page, tap to view fullscreen instead of dumping inline */}
+          {q.has_diagram&&(
+            q.diagramUrl?(
+              <button onClick={()=>setLightboxUrl(q.diagramUrl)}
+                style={{width:"100%",marginBottom:16,padding:"12px 14px",background:"rgba(184,151,62,0.06)",
+                  border:"1px dashed rgba(184,151,62,0.35)",borderRadius:8,cursor:"pointer",
+                  display:"flex",alignItems:"center",gap:8,textAlign:"left"}}>
+                <Eye size={14} color={T.gold} style={{flexShrink:0}}/>
+                <span style={{fontSize:12,color:T.gold,fontWeight:500}}>This question includes a diagram — tap to view page</span>
+              </button>
+            ):(
+              <div style={{marginBottom:16,padding:"10px 14px",background:"rgba(184,151,62,0.06)",border:"1px dashed rgba(184,151,62,0.3)",borderRadius:8,fontSize:12,color:T.muted,display:"flex",alignItems:"center",gap:8}}>
+                <Eye size={14} color={T.gold}/> This question includes a diagram — refer to your past question booklet.
+              </div>
+            )
+          )}
+
+          {/* Sub-questions */}
+          {sqs.length>0?(
+            <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:24}}>
+              {sqs.map(sq=>{
+                const mVal=qm[sq.part];
+                return(
+                  <div key={sq.part} style={{background:T.surface,border:`1px solid ${mVal?markColor[mVal]+"40":T.border}`,borderRadius:10,padding:"14px 16px"}}>
+                    {/* Sub-question header */}
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
+                    </div>
+                    <div style={{fontSize:14,lineHeight:1.6,color:T.text,marginBottom:12}}>{sq.text}</div>
+
+                    {/* Model answer — revealed */}
+                    {isRevealed&&sq.answer&&(
+                      <div style={{background:"rgba(34,197,94,0.06)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:8,padding:"10px 12px",marginBottom:12}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.success,letterSpacing:"0.1em",marginBottom:4}}>MODEL ANSWER</div>
+                        <div style={{fontSize:13,lineHeight:1.6,color:T.text}}>{sq.answer}</div>
+                      </div>
+                    )}
+
+                    {/* Self-mark buttons */}
+                    <div style={{display:"flex",gap:8}}>
+                      {["got","partial","missed"].map(mv=>(
+                        <button key={mv} onClick={()=>setMark(q.id,sq.part,mv)}
+                          style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${mVal===mv?markColor[mv]:T.border}`,
+                            background:mVal===mv?markColor[mv]+"18":"transparent",
+                            color:mVal===mv?markColor[mv]:T.muted,cursor:"pointer",
+                            fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:mVal===mv?700:400}}>
+                          {markLabel[mv]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ):(
+            <div style={{marginBottom:24}}>
+              {isRevealed&&q.answer&&(
+                <div style={{background:"rgba(34,197,94,0.06)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.success,letterSpacing:"0.1em",marginBottom:6}}>MODEL ANSWER</div>
+                  <div style={{fontSize:14,lineHeight:1.7,color:T.text}}>{q.answer}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Reveal button */}
+          <button onClick={()=>toggleReveal(q.id)}
+            style={{width:"100%",padding:"12px",borderRadius:10,marginBottom:12,
+              border:`1px solid ${isRevealed?"rgba(34,197,94,0.4)":T.border}`,
+              background:isRevealed?"rgba(34,197,94,0.06)":T.surface,
+              color:isRevealed?T.success:T.text,cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontSize:14,fontWeight:500}}>
+            <Eye size={16}/>{isRevealed?"Hide Model Answer":"Reveal Model Answer"}
+          </button>
+
+          {/* Next button */}
+          <button onClick={handleNext} disabled={!canNext()}
+            style={{width:"100%",padding:"14px",borderRadius:10,border:"none",
+              background:canNext()?T.gold:"rgba(184,151,62,0.2)",
+              color:canNext()?"#1a1209":"rgba(247,243,236,0.3)",
+              fontWeight:700,fontSize:15,cursor:canNext()?"pointer":"not-allowed",
+              fontFamily:"'DM Mono',monospace",letterSpacing:"0.04em"}}>
+            {idx<questions.length-1?"Next Question →":"Finish & See Results →"}
+          </button>
+          {!canNext()&&sqs.length>0&&<div style={{textAlign:"center",fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:8}}>Mark all parts to continue</div>}
+        </div>
+
+        {/* Lightbox — fullscreen page view, tap outside or X to close */}
+        {lightboxUrl&&(
+          <div onClick={()=>setLightboxUrl(null)}
+            style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.94)",zIndex:1000,
+              display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <button onClick={()=>setLightboxUrl(null)}
+              style={{position:"absolute",top:18,right:18,background:"rgba(255,255,255,0.12)",
+                border:"none",borderRadius:8,padding:8,cursor:"pointer",color:"#fff",zIndex:1001}}>
+              <X size={20}/>
+            </button>
+            <img src={lightboxUrl} alt="Question page" onClick={e=>e.stopPropagation()}
+              style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:4}}/>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── SUMMARY ──
+  if(phase==="summary"&&result){
+    const pct=result.pct;
+    const grade=pct>=70?"A":pct>=60?"B":pct>=50?"C":pct>=45?"D":"F";
+    const gradeColor=pct>=70?T.success:pct>=50?T.gold:T.danger;
+    const mins=Math.floor(result.duration/60),secs=result.duration%60;
+
+    return(
+      <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"20px 20px 0",display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={onBack} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}><ChevronLeft size={22}/></button>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.14em"}}>SESSION COMPLETE</div>
+        </div>
+
+        <div style={{flex:1,padding:"24px 20px",overflowY:"auto"}}>
+          {/* Score card */}
+          <div style={{textAlign:"center",padding:"32px 20px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,marginBottom:24}}>
+            <div style={{fontSize:64,fontWeight:800,color:gradeColor,lineHeight:1,marginBottom:4}}>{grade}</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,marginBottom:16}}>{result.earnedMarks} / {result.totalMarks} marks · {pct}%</div>
+            <div style={{display:"flex",justifyContent:"center",gap:24}}>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:20,fontWeight:700,color:T.text}}>{result.questionCount}</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>QUESTIONS</div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:20,fontWeight:700,color:T.text}}>{mins}:{String(secs).padStart(2,"0")}</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>TIME</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Per-question breakdown */}
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>QUESTION BREAKDOWN</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:28}}>
+            {questions.map((qn,i)=>{
+              const qm=marks[qn.id]||{};
+              const sqs=qn.subQuestions||[];
+              let qEarned=0,qTotal=0;
+              sqs.forEach(sq=>{
+                const m=sq.marks||1;qTotal+=m;
+                const mk=qm[sq.part];
+                if(mk==="got")qEarned+=m;
+                else if(mk==="partial")qEarned+=m*0.5;
+              });
+              const qPct=qTotal>0?Math.round((qEarned/qTotal)*100):null;
+              const color=qPct===null?T.muted:qPct>=70?T.success:qPct>=50?T.gold:T.danger;
+              return(
+                <div key={qn.id} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500,color:T.text,marginBottom:2}}>Q{i+1}{qn.topic?` · ${qn.topic}`:""}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>{qn.year} · Paper {qn.paperNumber||1}</div>
+                  </div>
+                  {qPct!==null&&(
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color}}>{Math.round(qEarned)}/{qTotal}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <button onClick={()=>setPhase("setup")}
+            style={{width:"100%",padding:"14px",borderRadius:10,border:`1px solid ${T.gold}`,background:"transparent",color:T.gold,
+              fontWeight:600,fontSize:15,cursor:"pointer",fontFamily:"'DM Mono',monospace",marginBottom:12}}>
+            Practice Again
+          </button>
+          <button onClick={onBack}
+            style={{width:"100%",padding:"13px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,color:T.text,
+              fontWeight:500,fontSize:14,cursor:"pointer"}}>
+            Back to Practice Setup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
 function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToast,onVerifyPayment}) {
   const pendingRef=localStorage.getItem("cq_pending_ref");
@@ -8477,6 +8860,21 @@ export default function App() {
     setTimeout(()=>{setOnboardComplete(false);setScreen("postonboard");},2200);
   };
 
+  const handleTheoryEnd=async result=>{
+    // Save theory session to Firestore
+    if(user?.uid){
+      try{
+        await addDoc(collection(db,"users",user.uid,"theoryHistory"),{
+          ...result,
+          createdAt:serverTimestamp()
+        });
+        const newStreak=Streak.bump();setStreak({count:newStreak,studiedToday:true});
+        updateDoc(doc(db,"users",user.uid),{streak:newStreak,lastSessionDate:new Date().toISOString().split("T")[0]}).catch(()=>{});
+        track("theory_session",{uid:user.uid,subject:result.subject,year:result.year,pct:result.pct});
+      }catch(e){console.error("[CrediQ] theory save:",e);}
+    }
+  };
+
   const handleExamEnd=async result=>{
     // Capture readiness BEFORE this session so we can show the delta
     const preReadiness=Math.round(calcReadiness(history)||0);
@@ -8847,10 +9245,11 @@ export default function App() {
           )}
 
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
-          {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T}/>}
+          {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}
           {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {screen==="ambassador"&&user&&<AmbassadorScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {/* WhyPremium: redirect premium users to dashboard */}

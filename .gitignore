@@ -31,3 +31,7 @@ serviceAccountKey.json
 test.py
 serviceAccount.json
 serviceAccount.json
+diagnose_diagrams.cjs
+apply_diagrams.cjs
+apply_diagrams.cjs
+scan_merged_questions.cjs

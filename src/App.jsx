@@ -4616,17 +4616,17 @@ function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory
           ))}
         </div>
 
-        {/* Theory Questions — gated: not ready for students yet, keep code intact, just block access */}
-        <button className="btn-press" onClick={()=>{}} disabled
-          style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"not-allowed",textAlign:"left",opacity:0.55}}>
+        {/* Theory Questions */}
+        <button className="btn-press" onClick={onTheory}
+          style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"pointer",textAlign:"left"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div>
               <div style={{fontSize:14,color:T.text,fontWeight:500,display:"flex",alignItems:"center",gap:8}}>
-                <BookOpen size={15} color={T.muted}/>Theory Questions
-                <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.08em",padding:"2px 7px",borderRadius:20,background:`${T.gold}18`,color:T.gold}}>COMING SOON</span>
+                <BookOpen size={15} color={T.gold}/>Theory Questions
               </div>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Essay · Short Answer · Structured</div>
             </div>
+            <ChevronRight size={16} color={T.muted}/>
           </div>
         </button>
 

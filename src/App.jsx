@@ -4616,17 +4616,17 @@ function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory
           ))}
         </div>
 
-        {/* Theory Questions */}
-        <button className="btn-press" onClick={onTheory}
-          style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"pointer",textAlign:"left"}}>
+        {/* Theory Questions — gated: not ready for students yet, keep code intact, just block access */}
+        <button className="btn-press" onClick={()=>{}} disabled
+          style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"not-allowed",textAlign:"left",opacity:0.55}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div>
               <div style={{fontSize:14,color:T.text,fontWeight:500,display:"flex",alignItems:"center",gap:8}}>
-                <BookOpen size={15} color={T.gold}/>Theory Questions
+                <BookOpen size={15} color={T.muted}/>Theory Questions
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.08em",padding:"2px 7px",borderRadius:20,background:`${T.gold}18`,color:T.gold}}>COMING SOON</span>
               </div>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Essay · Short Answer · Structured</div>
             </div>
-            <ChevronRight size={16} color={T.muted}/>
           </div>
         </button>
 
@@ -6536,6 +6536,10 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[emailBody,setEmailBody]=useState("");
   const[sending,setSending]=useState(false);
   const[emailCount,setEmailCount]=useState(0);
+  // Answer-key audit
+  const[auditing,setAuditing]=useState(false);
+  const[auditResults,setAuditResults]=useState(null); // null=not run, [] = clean, [...] = mismatches
+  const[auditError,setAuditError]=useState("");
   const isDesktop=useIsDesktop(900);
 
   const load=useCallback(async(isRefresh)=>{
@@ -6613,6 +6617,34 @@ function FounderDashboardScreen({onBack,T,showToast}){
   },[]);
 
   useEffect(()=>{load(false);},[load]);
+
+  const runAnswerAudit=useCallback(async()=>{
+    setAuditing(true);setAuditError("");
+    try{
+      const flagged=[];
+      for(const colName of["questions","theoryQuestions"]){
+        let snap;
+        try{ snap=await getDocs(collection(db,colName)); }catch{ continue; } // collection may not exist
+        snap.docs.forEach(d=>{
+          const q=d.data();
+          if(!q.options||typeof q.options!=="object")return; // theory Qs etc without MCQ options
+          const keys=Object.keys(q.options).map(k=>normAnswerKey(k));
+          const ca=normAnswerKey(q.correctAnswer);
+          if(!ca||!keys.includes(ca)){
+            flagged.push({
+              id:d.id,collection:colName,subject:q.subject||"",topic:q.topic||"",
+              correctAnswer:q.correctAnswer===undefined?"(missing)":String(q.correctAnswer),
+              optionKeys:Object.keys(q.options).join(", "),
+              question:(q.question||"").slice(0,80),
+            });
+          }
+        });
+      }
+      setAuditResults(flagged);
+    }catch(e){setAuditError(e?.message||"Audit failed — check Firestore rules/connection.");}
+    finally{setAuditing(false);}
+  },[]);
+
 
   // Filtered users
   const today3=new Date();today3.setDate(today3.getDate()-3);
@@ -6835,6 +6867,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
     {id:"email",label:"EMAIL"},
     {id:"export",label:"EXPORT"},
     {id:"applications",label:pendingCount>0?`APPLY (${pendingCount})`:"APPLY"},
+    {id:"audit",label:"AUDIT"},
   ];
 
   return(
@@ -7622,7 +7655,47 @@ function FounderDashboardScreen({onBack,T,showToast}){
               </div>
             )}
 
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}40`,textAlign:"center",margin:"24px 0",lineHeight:1.8,letterSpacing:"0.08em"}}>
+            {/* ── AUDIT TAB ── */}
+            {tab==="audit"&&(
+              <div style={{maxWidth:700}}>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>
+                  ANSWER-KEY AUDIT · checks every question's correctAnswer against its options
+                </div>
+                <button onClick={runAnswerAudit} disabled={auditing} className="btn-press" style={{
+                  width:"100%",padding:"14px 0",border:"none",borderRadius:10,
+                  background:T.gold,color:T.bg,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
+                  cursor:auditing?"not-allowed":"pointer",opacity:auditing?0.6:1,marginBottom:16}}>
+                  {auditing?"SCANNING…":"RUN AUDIT"}
+                </button>
+                {auditError&&(
+                  <div style={{background:"rgba(192,57,43,0.08)",border:"1px solid rgba(192,57,43,0.3)",borderRadius:10,padding:14,marginBottom:16}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.danger}}>{auditError}</div>
+                  </div>
+                )}
+                {auditResults!==null&&!auditError&&(
+                  auditResults.length===0?(
+                    <div style={{textAlign:"center",padding:"30px 20px",fontFamily:"'DM Mono',monospace",fontSize:11,color:"#4ade80"}}>
+                      ✓ Clean — every correctAnswer matches an option key.
+                    </div>
+                  ):(
+                    <>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.danger,marginBottom:12,fontWeight:700}}>
+                        ⚠ {auditResults.length} question{auditResults.length!==1?"s":""} with a broken correctAnswer
+                      </div>
+                      {auditResults.map((r,i)=>(
+                        <div key={i} style={{background:T.surface,border:`1px solid rgba(192,57,43,0.3)`,borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginBottom:4}}>{r.collection} / {r.id} · {r.subject} {r.topic?`· ${r.topic}`:""}</div>
+                          <div style={{fontSize:12,color:T.text,marginBottom:6,lineHeight:1.5}}>{r.question}{r.question.length>=80?"…":""}</div>
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger}}>correctAnswer: <strong>{r.correctAnswer}</strong> · options: <strong>{r.optionKeys}</strong></div>
+                        </div>
+                      ))}
+                    </>
+                  )
+                )}
+              </div>
+            )}
+
+
               LIVE FROM FIRESTORE · ONLY VISIBLE TO FOUNDER ACCOUNT
               {stats.testAccountCount>0&&<><br/>{stats.testAccountCount} test account{stats.testAccountCount!==1?"s":""} excluded from stats above</>}
             </div>

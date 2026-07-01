@@ -7695,7 +7695,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
               </div>
             )}
 
-
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}40`,textAlign:"center",margin:"24px 0",lineHeight:1.8,letterSpacing:"0.08em"}}>
               LIVE FROM FIRESTORE · ONLY VISIBLE TO FOUNDER ACCOUNT
               {stats.testAccountCount>0&&<><br/>{stats.testAccountCount} test account{stats.testAccountCount!==1?"s":""} excluded from stats above</>}
             </div>

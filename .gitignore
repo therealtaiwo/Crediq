@@ -35,3 +35,4 @@ diagnose_diagrams.cjs
 apply_diagrams.cjs
 apply_diagrams.cjs
 scan_merged_questions.cjs
+apply_fixes.cjs

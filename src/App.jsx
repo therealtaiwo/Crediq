@@ -7977,6 +7977,11 @@ function TheoryScreen({user,onEnd,onBack,T}){
   const[availableCount,setAvailableCount]=useState(null);
   const[countLoading,setCountLoading]=useState(false);
   const[timeLeft,setTimeLeft]=useState(0);
+  const[timerMode,setTimerMode]=useState("countdown"); // countdown | countup — decided at load time based on total marks
+  const[elapsedSeconds,setElapsedSeconds]=useState(0);
+  const[gradingProgress,setGradingProgress]=useState({current:0,total:0});
+  const[hasReachedReview,setHasReachedReview]=useState(false);
+  const[expandedSummaryQ,setExpandedSummaryQ]=useState(null);
   const startRef=useRef(Date.now());
   const timerRef=useRef(null);
 
@@ -7985,8 +7990,8 @@ function TheoryScreen({user,onEnd,onBack,T}){
   // existing premium in), free users default to 0 — meaning free tier NEVER
   // attempts AI grading and goes straight to the existing manual self-mark UI.
   const aiCreditsLeft=user.aiCredits??(user.isPremium?30:0);
+  const canUseAI=user.isPremium&&aiCreditsLeft>0;
   const[gradedResults,setGradedResults]=useState({});   // qId -> AI response
-  const[grading,setGrading]=useState(false);
   const[aiError,setAiError]=useState({});               // qId -> true, falls back to manual
   const[answerText,setAnswerText]=useState({});          // qId -> typed text
   const[answerPhoto,setAnswerPhoto]=useState({});        // qId -> {base64,mimeType,previewUrl}
@@ -8025,14 +8030,22 @@ function TheoryScreen({user,onEnd,onBack,T}){
       if(!qs.length){setErr("No theory questions found. Try All Years or a different subject.");setLoading(false);return;}
       setQuestions(qs);setIdx(0);setMarks({});setRevealed(new Set());
       setGradedResults({});setAiError({});setAnswerText({});setAnswerPhoto({});
-      setFollowUpUsed({});setFollowUpText({});
+      setFollowUpUsed({});setFollowUpText({});setHasReachedReview(false);
       startRef.current=Date.now();
       // Internal pacing assumption for practice purposes — not an official JUPEB timing figure.
-      // 90 seconds per mark, floor of 10 minutes, so a short set never feels artificially rushed.
+      // 90 seconds per mark, floor of 10 minutes. Above ~150 total marks this produces
+      // multi-hour countdowns that are unusable, so large sets switch to counting up instead —
+      // a countdown implies racing a penalty, which doesn't hold for open-ended batch writing.
       const totalMarksForTiming=qs.reduce((sum,qn)=>sum+(qn.subQuestions?.length
         ?qn.subQuestions.reduce((s,sq)=>s+(sq.marks||1),0)
         :(qn.totalMarks||10)),0);
-      setTimeLeft(Math.max(600,Math.round(totalMarksForTiming*90)));
+      if(totalMarksForTiming<=150){
+        setTimerMode("countdown");
+        setTimeLeft(Math.max(600,Math.round(totalMarksForTiming*90)));
+      }else{
+        setTimerMode("countup");
+        setElapsedSeconds(0);
+      }
       setPhase("practice");
     }catch{setErr("Failed to load. Check connection.");}
     finally{setLoading(false);}
@@ -8056,87 +8069,80 @@ function TheoryScreen({user,onEnd,onBack,T}){
     e.target.value="";
   };
 
-  const submitForGrading=async()=>{
-    if(!q)return;
-    const text=(answerText[q.id]||"").trim();
-    const photo=answerPhoto[q.id];
-    if(!text&&!photo)return;
-    setGrading(true);
+  const gradeOneQuestion=async qn=>{
+    const text=(answerText[qn.id]||"").trim();
+    const photo=answerPhoto[qn.id];
+    if(!text&&!photo)return null; // nothing attached — not an error, just skipped
     try{
-      const parts=(q.subQuestions?.length?q.subQuestions:[{part:"main",answer:q.answer,marks:q.totalMarks||10}])
-        .map(sq=>({part:sq.part,modelAnswer:sq.answer||"",maxMarks:sq.marks||q.totalMarks||10}));
-      const questionType=q.has_diagram?"diagram":(["Physics","Chemistry","Mathematics"].includes(subject)?"numeric":"conceptual");
+      const parts=(qn.subQuestions?.length?qn.subQuestions:[{part:"main",answer:qn.answer,marks:qn.totalMarks||10}])
+        .map(sq=>({part:sq.part,modelAnswer:sq.answer||"",maxMarks:sq.marks||qn.totalMarks||10}));
+      const questionType=qn.has_diagram?"diagram":(["Physics","Chemistry","Mathematics"].includes(subject)?"numeric":"conceptual");
       const res=await fetch("/api/grade-theory",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          subject,topic:q.topic||"",questionType,parts,
+          subject,topic:qn.topic||"",questionType,parts,
           studentAnswerText:text||undefined,
           studentAnswerImage:photo?{base64:photo.base64,mimeType:photo.mimeType}:undefined,
         })
       });
       const data=await res.json();
-      if(!res.ok||data.error||data.fallbackToManual){
-        setAiError(prev=>({...prev,[q.id]:true}));
-        return;
-      }
-      setGradedResults(prev=>({...prev,[q.id]:data}));
-      updateDoc(doc(db,"users",user.uid),{aiCredits:Math.max(0,aiCreditsLeft-1)}).catch(()=>{});
-    }catch{
-      setAiError(prev=>({...prev,[q.id]:true}));
-    }finally{
-      setGrading(false);
-    }
+      if(!res.ok||data.error||data.fallbackToManual)return{error:true};
+      return data;
+    }catch{return{error:true};}
   };
 
-  const askFollowUp=async()=>{
-    if(!q||followUpUsed[q.id])return;
-    const graded=gradedResults[q.id];
+  const askFollowUp=async qn=>{
+    if(followUpUsed[qn.id])return;
+    const graded=gradedResults[qn.id];
     if(!graded)return;
     setFollowUpLoading(true);
     try{
       const res=await fetch("/api/grade-theory",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          subject,topic:q.topic||"",parts:[{part:"main",modelAnswer:"",maxMarks:1}],
+          subject,topic:qn.topic||"",parts:[{part:"main",modelAnswer:"",maxMarks:1}],
           studentAnswerText:"(follow-up clarification request)",
           isFollowUp:true,priorFeedback:graded.overallFeedback,
         })
       });
       const data=await res.json();
-      if(res.ok&&data.clarification)setFollowUpText(prev=>({...prev,[q.id]:data.clarification}));
+      if(res.ok&&data.clarification)setFollowUpText(prev=>({...prev,[qn.id]:data.clarification}));
     }catch{}
     finally{
-      setFollowUpUsed(prev=>({...prev,[q.id]:true}));
+      setFollowUpUsed(prev=>({...prev,[qn.id]:true}));
       setFollowUpLoading(false);
     }
   };
 
   const canNext=()=>{
     if(!q)return false;
-    const canUseAI=user.isPremium&&aiCreditsLeft>0&&!aiError[q.id];
-    if(canUseAI)return !!gradedResults[q.id];
+    if(canUseAI)return !!(answerText[q.id]?.trim()||answerPhoto[q.id]);
     const sqs=q.subQuestions||[];
     const qm=marks[q.id]||{};
     if(!sqs.length)return !!qm.main;
     return sqs.every(sq=>qm[sq.part]);
   };
 
-  const finish=()=>{
+  // finish() accepts an explicit results object so runGradingBatch can pass its freshly-computed
+  // results directly — reading gradedResults from React state here would risk using a stale
+  // snapshot from before the batch's setGradedResults call has actually committed.
+  const finish=explicitResults=>{
+    const graded=explicitResults||gradedResults;
     clearInterval(timerRef.current);
     const duration=Math.round((Date.now()-startRef.current)/1000);
     let totalM=0,earnedM=0;
     const wrongTopicsSet=new Set();
     let aiGradedCount=0;
     questions.forEach(qn=>{
-      const graded=gradedResults[qn.id];
-      if(graded){
+      const g=graded[qn.id];
+      if(g){
         aiGradedCount++;
-        totalM+=graded.totalPossible||0;
-        earnedM+=graded.totalAwarded||0;
-        if(graded.weaknessDetected&&qn.topic&&qn.topic!=="Uncategorized")wrongTopicsSet.add(qn.topic);
+        totalM+=g.totalPossible||0;
+        earnedM+=g.totalAwarded||0;
+        if(g.weaknessDetected&&qn.topic&&qn.topic!=="Uncategorized")wrongTopicsSet.add(qn.topic);
         return;
       }
-      // Fallback: manual self-marking (free tier, or this question's AI call failed)
+      // Fallback: manual self-marking (free tier, or this question's AI call failed/was skipped)
       const parts=qn.subQuestions?.length?qn.subQuestions:[{part:"main",marks:qn.totalMarks||10}];
       let questionHadWeakness=false;
       parts.forEach(sq=>{
@@ -8156,25 +8162,64 @@ function TheoryScreen({user,onEnd,onBack,T}){
     setResult(r);onEnd(r);setPhase("summary");
   };
 
+  // Runs the AI grading pass sequentially (one call at a time, never in parallel) — this
+  // respects the shared 15-requests-per-minute ceiling across all premium students far
+  // better than firing every question's grading call at once.
+  const runGradingBatch=async()=>{
+    setPhase("grading");
+    const answeredQs=questions.filter(qn=>(answerText[qn.id]?.trim()||answerPhoto[qn.id]));
+    const toGrade=answeredQs.slice(0,aiCreditsLeft); // never grade more than remaining credits allow
+    setGradingProgress({current:0,total:toGrade.length});
+    const localResults={};
+    const localErrors={};
+    let creditsUsed=0;
+    for(let i=0;i<toGrade.length;i++){
+      const qn=toGrade[i];
+      setGradingProgress({current:i+1,total:toGrade.length});
+      const data=await gradeOneQuestion(qn);
+      if(data&&!data.error){localResults[qn.id]=data;creditsUsed++;}
+      else{localErrors[qn.id]=true;}
+    }
+    setGradedResults(localResults);
+    setAiError(localErrors);
+    if(creditsUsed>0)updateDoc(doc(db,"users",user.uid),{aiCredits:Math.max(0,aiCreditsLeft-creditsUsed)}).catch(()=>{});
+    finish(localResults);
+  };
+
   const handleNext=()=>{
-    if(idx<questions.length-1)setIdx(i=>i+1);
+    if(idx<questions.length-1){setIdx(i=>i+1);return;}
+    if(canUseAI){setHasReachedReview(true);setPhase("review");}
     else finish();
   };
 
   useEffect(()=>{
     if(phase!=="practice")return;
     timerRef.current=setInterval(()=>{
-      setTimeLeft(t=>{
-        if(t<=1){clearInterval(timerRef.current);finish();return 0;}
-        return t-1;
-      });
+      if(timerMode==="countdown"){
+        setTimeLeft(t=>{
+          if(t<=1){
+            clearInterval(timerRef.current);
+            if(canUseAI){setHasReachedReview(true);setPhase("review");}else finish();
+            return 0;
+          }
+          return t-1;
+        });
+      }else{
+        setElapsedSeconds(e=>e+1);
+      }
     },1000);
     return()=>clearInterval(timerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[phase]);
+  },[phase,timerMode]);
 
-  const fmtTime=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
-  const timerIsWarning=timeLeft<300&&timeLeft>=60,timerIsUrgent=timeLeft<60;
+  const fmtTime=s=>{
+    const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+    if(h>0)return `${h}:${String(m).padStart(2,"0")}`;
+    return `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  };
+  const displayTime=timerMode==="countdown"?timeLeft:elapsedSeconds;
+  const timerIsWarning=timerMode==="countdown"&&timeLeft<300&&timeLeft>=60;
+  const timerIsUrgent=timerMode==="countdown"&&timeLeft<60;
   const timerColor=timerIsUrgent?T.danger:timerIsWarning?T.warn:T.gold;
   const timerClass=timerIsUrgent?"timer-urgent":timerIsWarning?"timer-fast":"timer-pulse";
 
@@ -8270,16 +8315,15 @@ function TheoryScreen({user,onEnd,onBack,T}){
     );
   }
 
-  // ── PRACTICE ──
+  // ── PRACTICE (COLLECT) ── — gather answers only, no grading happens here anymore
   if(phase==="practice"&&q){
     const sqs=q.subQuestions||[];
     const qm=marks[q.id]||{};
     const isRevealed=revealed.has(q.id);
     const markColor={got:T.success,partial:"#f59e0b",missed:T.danger};
     const markLabel={got:"✓ Got it",partial:"~ Partial","missed":"✗ Missed"};
-    const canUseAI=user.isPremium&&aiCreditsLeft>0&&!aiError[q.id];
-    const graded=gradedResults[q.id];
     const currentPhoto=answerPhoto[q.id];
+    const isAnswered=canUseAI?!!(answerText[q.id]?.trim()||currentPhoto):false;
 
     return(
       <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
@@ -8287,14 +8331,23 @@ function TheoryScreen({user,onEnd,onBack,T}){
         <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
             <button onClick={()=>{clearInterval(timerRef.current);setPhase("setup");}} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:4}}><ChevronLeft size={20}/></button>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",flex:1}}>{subject.toUpperCase()} · THEORY</div>
-            <div className={timerClass} style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:timerColor,minWidth:52,textAlign:"right"}}>{fmtTime(timeLeft)}</div>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em"}}>{subject.toUpperCase()} · THEORY</div>
+              {hasReachedReview&&(
+                <button onClick={()=>setPhase("review")} style={{background:"none",border:"none",color:"#60a5fa",cursor:"pointer",padding:0,fontSize:10,fontFamily:"'DM Mono',monospace",marginTop:2}}>
+                  ← Back to Review
+                </button>
+              )}
+            </div>
+            <div className={timerClass} style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:timerColor,minWidth:52,textAlign:"right"}}>{fmtTime(displayTime)}</div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <div style={{flex:1,height:3,borderRadius:2,background:T.border}}>
               <div style={{height:"100%",borderRadius:2,background:T.gold,width:`${((idx+1)/questions.length)*100}%`,transition:"width .3s"}}/>
             </div>
-            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,flexShrink:0}}>Q{idx+1}/{questions.length}</span>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,flexShrink:0}}>
+              Q{idx+1}/{questions.length}{isAnswered&&<span style={{color:T.success,marginLeft:4}}>✓</span>}
+            </span>
           </div>
         </div>
 
@@ -8332,85 +8385,42 @@ function TheoryScreen({user,onEnd,onBack,T}){
             )
           )}
 
-          {/* Answer + grading — AI path for premium users with credits remaining, manual self-mark for everyone else */}
+          {/* Answer collection — AI path just gathers text/photo now, grading happens as a
+              batch after every question is answered. Manual path unchanged below. */}
           {canUseAI?(
             <div style={{marginBottom:24}}>
-              {!graded?(
-                <>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:10}}>
-                    AI GRADING · {aiCreditsLeft} LEFT THIS SEASON
-                  </div>
-                  <textarea value={answerText[q.id]||""} onChange={e=>setAnswerText(prev=>({...prev,[q.id]:e.target.value}))}
-                    placeholder="Type your answer here…" disabled={grading}
-                    style={{width:"100%",minHeight:120,padding:"14px",borderRadius:10,border:`1px solid ${T.border}`,
-                      background:T.surface,color:T.text,fontSize:14,lineHeight:1.6,fontFamily:"inherit",
-                      resize:"vertical",marginBottom:10,boxSizing:"border-box"}}/>
-                  <input ref={fileInputRef} type="file" accept="image/*" capture="environment"
-                    onChange={handlePhotoSelect} style={{display:"none"}}/>
-                  {currentPhoto?(
-                    <div style={{position:"relative",marginBottom:10}}>
-                      <img src={currentPhoto.previewUrl} alt="Your answer"
-                        style={{width:"100%",maxHeight:200,objectFit:"contain",borderRadius:10,border:`1px solid ${T.border}`}}/>
-                      <button onClick={()=>setAnswerPhoto(prev=>{const n={...prev};delete n[q.id];return n;})}
-                        style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.65)",border:"none",
-                          borderRadius:8,padding:6,cursor:"pointer",color:"#fff"}}>
-                        <X size={14}/>
-                      </button>
-                    </div>
-                  ):(
-                    <button onClick={()=>fileInputRef.current?.click()} disabled={grading}
-                      style={{width:"100%",padding:"10px",borderRadius:10,marginBottom:10,
-                        border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,
-                        cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontSize:13}}>
-                      📷 Or take a photo of your written answer
-                    </button>
-                  )}
-                  <button onClick={submitForGrading} disabled={grading||(!answerText[q.id]?.trim()&&!currentPhoto)}
-                    style={{width:"100%",padding:"14px",borderRadius:10,border:"none",
-                      background:grading||(!answerText[q.id]?.trim()&&!currentPhoto)?"rgba(184,151,62,0.25)":T.gold,
-                      color:grading||(!answerText[q.id]?.trim()&&!currentPhoto)?"rgba(247,243,236,0.4)":"#1a1209",
-                      fontWeight:700,fontSize:14,cursor:grading?"wait":"pointer",fontFamily:"'DM Mono',monospace"}}>
-                    {grading?"Grading…":"Submit for AI Grading →"}
+              <div style={{display:"inline-flex",alignItems:"center",gap:6,fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:10,
+                background:"rgba(184,151,62,0.1)",border:"1px solid rgba(184,151,62,0.25)",borderRadius:20,padding:"4px 12px"}}>
+                ✨ AI GRADING · {aiCreditsLeft} CREDITS REMAINING
+              </div>
+              <textarea value={answerText[q.id]||""} onChange={e=>setAnswerText(prev=>({...prev,[q.id]:e.target.value}))}
+                placeholder="Type your answer here…"
+                style={{width:"100%",minHeight:120,padding:"14px",borderRadius:10,border:`1px solid ${T.border}`,
+                  background:T.surface,color:T.text,fontSize:14,lineHeight:1.6,fontFamily:"inherit",
+                  resize:"vertical",marginBottom:10,boxSizing:"border-box"}}/>
+              <input ref={fileInputRef} type="file" accept="image/*" capture="environment"
+                onChange={handlePhotoSelect} style={{display:"none"}}/>
+              {currentPhoto?(
+                <div style={{position:"relative",marginBottom:10}}>
+                  <img src={currentPhoto.previewUrl} alt="Your answer"
+                    style={{width:"100%",maxHeight:200,objectFit:"contain",borderRadius:10,border:`1px solid ${T.border}`}}/>
+                  <button onClick={()=>setAnswerPhoto(prev=>{const n={...prev};delete n[q.id];return n;})}
+                    style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.65)",border:"none",
+                      borderRadius:8,padding:6,cursor:"pointer",color:"#fff"}}>
+                    <X size={14}/>
                   </button>
-                </>
+                </div>
               ):(
-                <>
-                  {(graded.parts||[]).map(p=>(
-                    <div key={p.part} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:8}}>
-                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>
-                          {p.part==="main"?"ANSWER":`(${String(p.part).toUpperCase()})`}
-                        </span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
-                          color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>
-                          {p.awardedMarks}/{p.maxMarks}
-                        </span>
-                      </div>
-                      <div style={{fontSize:13,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
-                    </div>
-                  ))}
-                  <div style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:10,padding:"12px 14px",marginTop:4}}>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.gold,letterSpacing:"0.1em",marginBottom:5}}>
-                      {graded.totalAwarded}/{graded.totalPossible} MARKS
-                    </div>
-                    <div style={{fontSize:13,lineHeight:1.6,color:T.text}}>{graded.overallFeedback}</div>
-                  </div>
-                  {followUpText[q.id]?(
-                    <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:10,padding:"12px 14px",marginTop:8}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#60a5fa",letterSpacing:"0.1em",marginBottom:5}}>CLARIFICATION</div>
-                      <div style={{fontSize:13,lineHeight:1.6,color:T.text}}>{followUpText[q.id]}</div>
-                    </div>
-                  ):!followUpUsed[q.id]&&(
-                    <button onClick={askFollowUp} disabled={followUpLoading}
-                      style={{width:"100%",padding:"10px",borderRadius:10,marginTop:8,
-                        border:"1px solid rgba(96,165,250,0.3)",background:"rgba(96,165,250,0.06)",
-                        color:"#60a5fa",cursor:followUpLoading?"wait":"pointer",fontSize:12,
-                        fontFamily:"'DM Mono',monospace"}}>
-                      {followUpLoading?"Asking…":"I still don't understand →"}
-                    </button>
-                  )}
-                </>
+                <button onClick={()=>fileInputRef.current?.click()}
+                  style={{width:"100%",padding:"12px",borderRadius:10,marginBottom:10,
+                    border:`1px dashed ${T.border}`,background:"transparent",color:T.muted,
+                    cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontSize:13}}>
+                  📷 Or take a photo of your written answer
+                </button>
               )}
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}80`,textAlign:"center"}}>
+                Grading happens once you've answered every question — keep going.
+              </div>
             </div>
           ):(
           <>
@@ -8476,9 +8486,9 @@ function TheoryScreen({user,onEnd,onBack,T}){
           </>
           )}
 
-          {/* Reveal button — hidden pre-submission on the AI path so students can't peek at the
-              model answer and just retype it; still always available on the manual path */}
-          {(!canUseAI||graded)&&(
+          {/* Reveal button — hidden until an answer is attached on the AI path, so students
+              can't peek at the model answer and just retype it; always available on the manual path */}
+          {(!canUseAI||isAnswered)&&(
             <button onClick={()=>toggleReveal(q.id)}
               style={{width:"100%",padding:"12px",borderRadius:10,marginBottom:12,
                 border:`1px solid ${isRevealed?"rgba(34,197,94,0.4)":T.border}`,
@@ -8496,11 +8506,11 @@ function TheoryScreen({user,onEnd,onBack,T}){
               color:canNext()?"#1a1209":"rgba(247,243,236,0.3)",
               fontWeight:700,fontSize:15,cursor:canNext()?"pointer":"not-allowed",
               fontFamily:"'DM Mono',monospace",letterSpacing:"0.04em"}}>
-            {idx<questions.length-1?"Next Question →":"Finish & See Results →"}
+            {idx<questions.length-1?"Next Question →":canUseAI?"Review All Answers →":"Finish & See Results →"}
           </button>
           {!canNext()&&(
             <div style={{textAlign:"center",fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:8}}>
-              {canUseAI?"Submit your answer to continue":"Mark all parts to continue"}
+              {canUseAI?"Type or photograph an answer to continue":"Mark all parts to continue"}
             </div>
           )}
         </div>
@@ -8523,6 +8533,97 @@ function TheoryScreen({user,onEnd,onBack,T}){
     );
   }
 
+  // ── REVIEW ── — every question's status before committing credits to grading
+  if(phase==="review"){
+    const answeredList=questions.filter(qn=>(answerText[qn.id]?.trim()||answerPhoto[qn.id]));
+    const skippedCount=questions.length-answeredList.length;
+    const willGradeCount=Math.min(answeredList.length,aiCreditsLeft);
+    const overflowCount=Math.max(0,answeredList.length-aiCreditsLeft);
+
+    return(
+      <motion.div initial={{opacity:0}} animate={{opacity:1}} transition={{duration:0.25}}
+        style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"20px 20px 0",display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={()=>{setIdx(questions.length-1);setPhase("practice");}} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}><ChevronLeft size={22}/></button>
+          <div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.14em"}}>REVIEW YOUR ANSWERS</div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700}}>{answeredList.length} of {questions.length} answered</div>
+          </div>
+        </div>
+
+        <div style={{flex:1,padding:"20px",overflowY:"auto"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            {questions.map((qn,i)=>{
+              const answered=!!(answerText[qn.id]?.trim()||answerPhoto[qn.id]);
+              return(
+                <button key={qn.id} onClick={()=>{setIdx(i);setPhase("practice");}}
+                  style={{width:"100%",textAlign:"left",padding:"12px 14px",borderRadius:10,cursor:"pointer",
+                    border:`1px solid ${answered?"rgba(74,222,128,0.3)":T.border}`,
+                    background:answered?"rgba(74,222,128,0.05)":T.surface,
+                    display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:26,height:26,borderRadius:8,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+                    background:answered?"rgba(74,222,128,0.15)":"rgba(255,255,255,0.05)",
+                    color:answered?T.success:T.muted,fontSize:12,fontWeight:700}}>
+                    {answered?"✓":i+1}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:500,color:T.text}}>Q{i+1}{qn.topic?` · ${qn.topic}`:""}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:2}}>
+                      {answerPhoto[qn.id]?"📷 Photo attached":answerText[qn.id]?.trim()?`${answerText[qn.id].trim().slice(0,40)}…`:"Not answered"}
+                    </div>
+                  </div>
+                  <ChevronRight size={16} color={T.muted}/>
+                </button>
+              );
+            })}
+          </div>
+
+          {skippedCount>0&&(
+            <div style={{background:"rgba(249,115,22,0.06)",border:"1px solid rgba(249,115,22,0.2)",borderRadius:10,padding:"12px 14px",marginBottom:12,fontSize:12,color:"#f97316"}}>
+              {skippedCount} question{skippedCount===1?"":"s"} left unanswered — they'll count as zero unless you go back and attach an answer.
+            </div>
+          )}
+          {overflowCount>0&&(
+            <div style={{background:"rgba(239,68,68,0.06)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:10,padding:"12px 14px",marginBottom:12,fontSize:12,color:"#ef4444"}}>
+              You have {aiCreditsLeft} credits left — only your first {willGradeCount} answered question{willGradeCount===1?"":"s"} will be AI graded. The rest won't be scored this round.
+            </div>
+          )}
+          {answeredList.length>0&&overflowCount===0&&(
+            <div style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:10,padding:"12px 14px",marginBottom:20,fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold}}>
+              This will use {willGradeCount} of your {aiCreditsLeft} remaining credits.
+            </div>
+          )}
+
+          <button onClick={runGradingBatch} disabled={answeredList.length===0}
+            style={{width:"100%",padding:"16px",borderRadius:12,border:"none",
+              background:answeredList.length===0?"rgba(184,151,62,0.2)":"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",
+              color:answeredList.length===0?"rgba(247,243,236,0.3)":"#F7F3EC",
+              fontFamily:"'Playfair Display',serif",fontWeight:700,fontSize:16,
+              cursor:answeredList.length===0?"not-allowed":"pointer",
+              boxShadow:answeredList.length===0?"none":"0 8px 28px rgba(0,75,59,0.4)"}}>
+            Submit All for AI Grading →
+          </button>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // ── GRADING ── — sequential, visible, never silent
+  if(phase==="grading"){
+    return(
+      <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20}}>
+        <motion.div animate={{rotate:360}} transition={{duration:1.4,repeat:Infinity,ease:"linear"}}
+          style={{width:44,height:44,border:`3px solid ${T.border}`,borderTopColor:T.gold,borderRadius:"50%",marginBottom:24}}/>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,marginBottom:8}}>
+          Grading {gradingProgress.current} of {gradingProgress.total}
+        </div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,textAlign:"center"}}>
+          One question at a time — this keeps grading accurate for everyone using CrediQ right now.
+        </div>
+      </div>
+    );
+  }
+
   // ── SUMMARY ──
   if(phase==="summary"&&result){
     const pct=result.pct;
@@ -8539,25 +8640,90 @@ function TheoryScreen({user,onEnd,onBack,T}){
 
         <div style={{flex:1,padding:"24px 20px",overflowY:"auto"}}>
           {/* Score card */}
-          <div style={{textAlign:"center",padding:"32px 20px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,marginBottom:24}}>
-            <div style={{fontSize:64,fontWeight:800,color:gradeColor,lineHeight:1,marginBottom:4}}>{grade}</div>
+          <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{type:"spring",stiffness:260,damping:24}}
+            style={{textAlign:"center",padding:"32px 20px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,marginBottom:24}}>
+            <motion.div initial={{scale:0.7,opacity:0}} animate={{scale:1,opacity:1}} transition={{type:"spring",stiffness:280,damping:20,delay:0.15}}
+              style={{fontFamily:"'Playfair Display',serif",fontSize:68,fontWeight:900,color:gradeColor,lineHeight:1,marginBottom:4,textShadow:`0 0 32px ${gradeColor}35`}}>
+              {grade}
+            </motion.div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,marginBottom:16}}>{result.earnedMarks} / {result.totalMarks} marks · {pct}%</div>
             <div style={{display:"flex",justifyContent:"center",gap:24}}>
               <div style={{textAlign:"center"}}>
-                <div style={{fontSize:20,fontWeight:700,color:T.text}}>{result.questionCount}</div>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:T.text}}>{result.questionCount}</div>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>QUESTIONS</div>
               </div>
               <div style={{textAlign:"center"}}>
-                <div style={{fontSize:20,fontWeight:700,color:T.text}}>{mins}:{String(secs).padStart(2,"0")}</div>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:T.text}}>{mins}:{String(secs).padStart(2,"0")}</div>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>TIME</div>
               </div>
+              {result.aiGradedCount>0&&(
+                <div style={{textAlign:"center"}}>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:T.gold}}>{result.aiGradedCount}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>AI GRADED</div>
+                </div>
+              )}
             </div>
-          </div>
+          </motion.div>
 
-          {/* Per-question breakdown */}
+          {/* Per-question breakdown — AI feedback when available, manual marks otherwise */}
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>QUESTION BREAKDOWN</div>
           <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:28}}>
             {questions.map((qn,i)=>{
+              const graded=gradedResults[qn.id];
+              const isExpanded=expandedSummaryQ===qn.id;
+
+              if(graded){
+                const qColor=graded.totalAwarded>=graded.totalPossible*0.7?T.success:graded.totalAwarded>=graded.totalPossible*0.5?T.gold:T.danger;
+                return(
+                  <motion.div key={qn.id} initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{delay:i*0.04}}
+                    style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,overflow:"hidden"}}>
+                    <button onClick={()=>setExpandedSummaryQ(isExpanded?null:qn.id)}
+                      style={{width:"100%",padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",
+                        background:"none",border:"none",cursor:"pointer",textAlign:"left"}}>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:500,color:T.text,marginBottom:2,display:"flex",alignItems:"center",gap:6}}>
+                          Q{i+1}{qn.topic?` · ${qn.topic}`:""}
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:T.gold,background:"rgba(184,151,62,0.12)",borderRadius:8,padding:"1px 6px"}}>AI</span>
+                        </div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>{qn.year} · Paper {qn.paperNumber||1}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:qColor}}>{graded.totalAwarded}/{graded.totalPossible}</div>
+                        <ChevronRight size={14} color={T.muted} style={{transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.2s"}}/>
+                      </div>
+                    </button>
+                    {isExpanded&&(
+                      <div style={{padding:"0 14px 14px"}}>
+                        {(graded.parts||[]).map(p=>(
+                          <div key={p.part} style={{marginBottom:8,padding:"8px 10px",background:"rgba(0,0,0,0.15)",borderRadius:7}}>
+                            <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                              <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,fontWeight:700}}>{p.part==="main"?"ANSWER":`(${String(p.part).toUpperCase()})`}</span>
+                              <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>{p.awardedMarks}/{p.maxMarks}</span>
+                            </div>
+                            <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
+                          </div>
+                        ))}
+                        <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[qn.id]||!followUpUsed[qn.id]?8:0}}>{graded.overallFeedback}</div>
+                        {followUpText[qn.id]?(
+                          <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:8,padding:"10px 12px"}}>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#60a5fa",letterSpacing:"0.1em",marginBottom:4}}>CLARIFICATION</div>
+                            <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{followUpText[qn.id]}</div>
+                          </div>
+                        ):!followUpUsed[qn.id]&&(
+                          <button onClick={()=>askFollowUp(qn)} disabled={followUpLoading}
+                            style={{width:"100%",padding:"9px",borderRadius:8,border:"1px solid rgba(96,165,250,0.3)",
+                              background:"rgba(96,165,250,0.06)",color:"#60a5fa",cursor:followUpLoading?"wait":"pointer",
+                              fontSize:11,fontFamily:"'DM Mono',monospace"}}>
+                            {followUpLoading?"Asking…":"I still don't understand →"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              }
+
+              // Manual fallback — unchanged calculation
               const qm=marks[qn.id]||{};
               const sqs=qn.subQuestions||[];
               let qEarned=0,qTotal=0;
@@ -8570,7 +8736,8 @@ function TheoryScreen({user,onEnd,onBack,T}){
               const qPct=qTotal>0?Math.round((qEarned/qTotal)*100):null;
               const color=qPct===null?T.muted:qPct>=70?T.success:qPct>=50?T.gold:T.danger;
               return(
-                <div key={qn.id} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <motion.div key={qn.id} initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{delay:i*0.04}}
+                  style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div>
                     <div style={{fontSize:13,fontWeight:500,color:T.text,marginBottom:2}}>Q{i+1}{qn.topic?` · ${qn.topic}`:""}</div>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted}}>{qn.year} · Paper {qn.paperNumber||1}</div>
@@ -8578,14 +8745,16 @@ function TheoryScreen({user,onEnd,onBack,T}){
                   {qPct!==null&&(
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color}}>{Math.round(qEarned)}/{qTotal}</div>
                   )}
-                </div>
+                </motion.div>
               );
             })}
           </div>
 
           <button onClick={()=>setPhase("setup")}
-            style={{width:"100%",padding:"14px",borderRadius:10,border:`1px solid ${T.gold}`,background:"transparent",color:T.gold,
-              fontWeight:600,fontSize:15,cursor:"pointer",fontFamily:"'DM Mono',monospace",marginBottom:12}}>
+            style={{width:"100%",padding:"15px",borderRadius:12,border:"none",
+              background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",
+              color:"#F7F3EC",fontWeight:700,fontSize:15,cursor:"pointer",fontFamily:"'Playfair Display',serif",marginBottom:12,
+              boxShadow:"0 8px 28px rgba(0,75,59,0.4)"}}>
             Practice Again
           </button>
           <button onClick={onBack}

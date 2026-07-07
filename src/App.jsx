@@ -9352,15 +9352,25 @@ export default function App() {
     try{
       const qb={};
       for(const subject of subjects){
-        // Check IndexedDB cache first
+        // Check IndexedDB cache first (24hr TTL)
         const cached=await IDB.get(`questions_${subject}`);
-        if(cached){qb[subject]=cached;continue;}
-        // Fetch from Firestore
-        const q=query(collection(db,"questions"),where("subject","==",subject),where("isValid","==",true));
-        const snap=await getDocs(q);
+        if(cached&&Object.keys(cached).length>0){qb[subject]=cached;continue;}
+        // Fetch from Firestore — single-field query only, no composite index needed.
+        // isValid is filtered client-side instead of server-side to avoid
+        // requiring a Firestore composite index on (subject, isValid).
+        let snap;
+        try{
+          const q=query(collection(db,"questions"),where("subject","==",subject));
+          snap=await getDocs(q);
+        }catch(fetchErr){
+          console.error(`QB fetch failed for ${subject}:`,fetchErr);
+          continue; // one subject failing shouldn't block the others
+        }
         const byYear={};
         snap.docs.forEach(d=>{
-          const data=d.data();const year=String(data.year);
+          const data=d.data();
+          if(data.isValid===false)return; // client-side validity filter
+          const year=String(data.year);
           if(!byYear[year])byYear[year]=[];
           byYear[year].push(data);
         });
@@ -9368,11 +9378,14 @@ export default function App() {
         // Cache in IndexedDB
         await IDB.set(`questions_${subject}`,byYear);
       }
-      setQB(qb);
-      show("Questions loaded — you're ready.","success");
+      if(Object.keys(qb).length>0){
+        setQB(qb);
+      }else{
+        show("Couldn't load questions. Please check your internet connection and try again.","error");
+      }
     }catch(e){
       console.error("Load questions:",e);
-      show("Couldn't load questions. Check your internet.","error");
+      show("Couldn't load questions. Check your internet connection.","error");
     }
   };
 

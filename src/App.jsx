@@ -4843,7 +4843,10 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
     const qResults=questions.map((q,i)=>{
       const ua=latestAnswers[i];const ok=answersMatch(ua,q.correctAnswer);
       if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
-      return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua||null,correctAnswer:q.correctAnswer,explanation:q.explanation||""};
+      const opts=q.options&&typeof q.options==="object"?q.options:{};
+      const userAnswerText=ua?(opts[ua]??opts[normAnswerKey(ua)]??null):null;
+      const correctAnswerText=opts[q.correctAnswer]??opts[normAnswerKey(q.correctAnswer)]??null;
+      return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua||null,userAnswerText,correctAnswer:q.correctAnswer,correctAnswerText,explanation:q.explanation||""};
     });
     const total=questions.length,pct=Math.round((correct/total)*100);
     track("exam_completed",{uid:userUidRef.current,subject,pct,grade:grade(pct),duration});
@@ -4871,7 +4874,10 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
             const q=questions[parseInt(idx)];
             const ok=answersMatch(ua,q.correctAnswer);
             if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
-            return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua,correctAnswer:q.correctAnswer,explanation:q.explanation||"",timeSpent:0};
+            const opts=q.options&&typeof q.options==="object"?q.options:{};
+            const userAnswerText=ua?(opts[ua]??opts[normAnswerKey(ua)]??null):null;
+            const correctAnswerText=opts[q.correctAnswer]??opts[normAnswerKey(q.correctAnswer)]??null;
+            return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua,userAnswerText,correctAnswer:q.correctAnswer,correctAnswerText,explanation:q.explanation||"",timeSpent:0};
           });
         const total=qResults.length;
         const pct=Math.round((correct/total)*100);
@@ -5555,7 +5561,12 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,color:r.correct?T.success:T.danger}}>{r.correct?"✓ CORRECT":"✕ INCORRECT"}</span>
                 </div>
                 <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
-                {!r.correct&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6}}>You: <strong>{r.userAnswer||"—"}</strong> · Correct: <strong>{r.correctAnswer}</strong></div>}
+                {!r.correct&&(
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6,lineHeight:1.6}}>
+                    <div>You picked <strong>{r.userAnswer||"—"}</strong>{r.userAnswerText?` — "${r.userAnswerText}"`:""}</div>
+                    <div>Correct answer: <strong>{r.correctAnswer}</strong>{r.correctAnswerText?` — "${r.correctAnswerText}"`:""}</div>
+                  </div>
+                )}
                 {r.explanation&&(
                   <div style={{background:`${T.gold}09`,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 12px"}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold,letterSpacing:"0.1em",marginBottom:5}}>EXPLANATION</div>

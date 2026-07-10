@@ -8033,7 +8033,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
     if(!subject){setErr("Select a subject first");return;}
     setLoading(true);setErr("");
     try{
-      const conds=[where("examType","==","THEORY"),where("subject","==",subject),limit(40)];
+      const conds=[where("examType","==","THEORY"),where("subject","==",subject),limit(200)];
       if(year!=="all")conds.push(where("year","==",parseInt(year)));
       const snap=await getDocs(query(collection(db,"theoryQuestions"),...conds));
       let qs=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -9157,6 +9157,49 @@ export default function App() {
   const [examResult,setExamResult]=useState(null);
   const [showPremiumGate,setShowPremiumGate]=useState(false);
   const [showSessionMismatch,setShowSessionMismatch]=useState(false);
+
+  // ── FORCE FRESH APP VERSION ──
+  // Fixes the stale-cache bug where a browser silently kept serving an old build
+  // for a full session after a real deploy. Actively asks the service worker to
+  // check for updates (instead of waiting on the browser's own lazy timing), and
+  // reloads once a new version actually takes control — but never mid-exam or
+  // mid-theory-practice, so an active session is never yanked out from under someone.
+  useEffect(()=>{
+    if(!("serviceWorker" in navigator))return;
+    let reloaded=false;
+    const forceReloadOnNewVersion=()=>{
+      if(reloaded)return;
+      const inActiveSession=screen==="exam"||screen==="theory";
+      if(inActiveSession)return; // will still catch it on the next check
+      reloaded=true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.getRegistration().then(reg=>{
+      if(!reg)return;
+      reg.update().catch(()=>{});
+      reg.addEventListener("updatefound",()=>{
+        const newWorker=reg.installing;
+        if(!newWorker)return;
+        newWorker.addEventListener("statechange",()=>{
+          if(newWorker.state==="installed"&&navigator.serviceWorker.controller){
+            // A previous controller already existed — this is a real update, not a first install.
+            forceReloadOnNewVersion();
+          }
+        });
+      });
+    }).catch(()=>{});
+    navigator.serviceWorker.addEventListener("controllerchange",forceReloadOnNewVersion);
+    const onVisible=()=>{
+      if(document.visibilityState==="visible"){
+        navigator.serviceWorker.getRegistration().then(reg=>reg?.update().catch(()=>{})).catch(()=>{});
+      }
+    };
+    document.addEventListener("visibilitychange",onVisible);
+    return()=>{
+      navigator.serviceWorker.removeEventListener("controllerchange",forceReloadOnNewVersion);
+      document.removeEventListener("visibilitychange",onVisible);
+    };
+  },[screen]);
 
   // ── SESSION POLL: every 30s check if another device stole the session ──
   useEffect(()=>{

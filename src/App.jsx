@@ -1180,6 +1180,38 @@ function normAnswerKey(a){
 function answersMatch(userAnswer,correctAnswer){
   return normAnswerKey(userAnswer)===normAnswerKey(correctAnswer);
 }
+
+// ─── SEMANTIC MISMATCH DETECTION ───────────────────────────────────────────────
+// Catches what the structural audit can't: correctAnswer points to a REAL
+// option key, but the wrong one — usually because option order got shuffled
+// during question-bank upload without correctAnswer being remapped to follow.
+const STOPWORDS=new Set(["the","a","an","is","was","were","are","of","in","on","at","to","and","or",
+  "but","by","with","for","as","that","this","these","those","it","its","his","her","their","he","she",
+  "they","which","who","whom","from","be","been","being","not","no","so","if","then","than","because",
+  "due","during","after","before","when","where","what","how","why","did","do","does","having","has",
+  "had","will","would","should","could","can","may","might","one","also","such","into","over","under"]);
+
+function stem(w){
+  // basic singular/plural normalization — "sandals"→"sandal", "kings"→"king"
+  if(w.length>4&&w.endsWith("es"))return w.slice(0,-2);
+  if(w.length>3&&w.endsWith("s")&&!w.endsWith("ss"))return w.slice(0,-1);
+  return w;
+}
+function tokenize(text){
+  return(text||"").toLowerCase().replace(/[^a-z0-9\s]/g," ").split(/\s+/)
+    .filter(w=>w.length>=3&&!STOPWORDS.has(w)).map(stem);
+}
+// Coverage = what fraction of THIS option's own words appear in the explanation.
+// Using coverage instead of a raw count means short options (many quiz options
+// are a single word like "Sandal" or "Staff") can still score a clean 100%
+// match instead of being unfairly penalized against longer options.
+function optionCoverage(explanationTokenSet,optionText){
+  const optTokens=tokenize(optionText);
+  if(!optTokens.length)return 0;
+  let matched=0;
+  optTokens.forEach(t=>{if(explanationTokenSet.has(t))matched++;});
+  return matched/optTokens.length; // 0..1 — fraction of this option's words found in the explanation
+}
 function isUsableQuestion(q){
   if(q.hasDiagram===true&&!q.diagramUrl)return false;
   if(STEM_SUBJECTS.includes(q.subject||"")){
@@ -3425,32 +3457,32 @@ function WhatsAppBanner({user,T,onSaved}){
   return(
     <motion.div initial={{opacity:0,y:-12}} animate={{opacity:1,y:0}} transition={{duration:0.35,ease:[0.16,1,0.3,1]}}
       style={{background:"rgba(37,211,102,0.06)",border:"1px solid rgba(37,211,102,0.22)",borderRadius:12,
-        padding:"14px 16px",marginBottom:14,position:"relative"}}>
-      <button onClick={dismiss} style={{position:"absolute",top:10,right:12,background:"none",border:"none",
-        color:"rgba(247,243,236,0.22)",cursor:"pointer",fontSize:18,lineHeight:1}}>✕</button>
-      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#25D366",letterSpacing:"0.12em",marginBottom:4}}>💬 GET UPDATES ON WHATSAPP</div>
-      <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:"rgba(247,243,236,0.9)",marginBottom:5}}>
+        padding:"10px 14px",marginBottom:10,position:"relative"}}>
+      <button onClick={dismiss} style={{position:"absolute",top:8,right:10,background:"none",border:"none",
+        color:"rgba(247,243,236,0.22)",cursor:"pointer",fontSize:16,lineHeight:1}}>✕</button>
+      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#25D366",letterSpacing:"0.12em",marginBottom:3}}>💬 GET UPDATES ON WHATSAPP</div>
+      <div style={{fontFamily:"'Playfair Display',serif",fontSize:13,fontWeight:700,color:"rgba(247,243,236,0.9)",marginBottom:4}}>
         Stay connected to your JUPEB prep
       </div>
-      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginBottom:10,lineHeight:1.7}}>
+      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.35)",marginBottom:8,lineHeight:1.5}}>
         Exam alerts, weekly progress summary, and study reminders — straight to WhatsApp. No spam.
       </div>
       {!showInput?(
         <button onClick={()=>setShowInput(true)}
-          style={{padding:"10px 18px",background:"#25D366",border:"none",borderRadius:8,
-            color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
+          style={{padding:"8px 16px",background:"#25D366",border:"none",borderRadius:8,
+            color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
           Add My Number →
         </button>
       ):(
         <div style={{display:"flex",gap:8}}>
           <input value={num} onChange={e=>setNum(e.target.value)} type="tel" placeholder="08012345678" autoFocus
-            style={{flex:1,padding:"11px 14px",background:"rgba(255,255,255,0.06)",
+            style={{flex:1,padding:"9px 12px",background:"rgba(255,255,255,0.06)",
               border:"1px solid rgba(37,211,102,0.35)",borderRadius:8,color:"#F7F3EC",
-              fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}
+              fontFamily:"'DM Mono',monospace",fontSize:12,outline:"none"}}
             onKeyDown={e=>e.key==="Enter"&&doSave()}/>
           <button onClick={doSave} disabled={saving||!num.trim()}
-            style={{padding:"11px 16px",background:"#25D366",border:"none",borderRadius:8,
-              color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,
+            style={{padding:"9px 14px",background:"#25D366",border:"none",borderRadius:8,
+              color:"#fff",fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,
               cursor:saving||!num.trim()?"not-allowed":"pointer",opacity:saving||!num.trim()?0.6:1}}>
             {saving?"…":"Save"}
           </button>
@@ -3710,6 +3742,56 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   },[history,daysLeft]);
   const hasData=history.length>0;
   const firstName=user.name?.split(" ")[0]||"";
+  // B.5 — Continuous Conversation. Revised per review: the opener is no longer
+  // date-rotated — it comes entirely from what the student said, so the mentor
+  // reads as one consistent person, not a rotation of templates.
+  const CONVERSATION_TEMPLATES={
+    rushed:t=>["I remember yesterday...",`You rushed ${t}.`,"Let's slow down today."],
+    guessed:t=>["Yesterday told us something.",`You guessed more than you usually do on ${t}.`,"Today we'll take our time."],
+    topic:t=>["I know yesterday felt confusing.",`${t} didn't quite click.`,"Let's untangle that together."],
+    confidence:t=>["I noticed yesterday...",`You weren't feeling sure about ${t}.`,"Let's rebuild that today."],
+  };
+  const yesterdayConversation=useMemo(()=>{
+    const lr=user?.lastReflection;
+    if(!lr?.date||!lr?.weakTopic||!lr?.reflection)return null;
+    const lrDate=new Date(lr.date+"T00:00:00Z").getTime();
+    const todayMidnight=new Date(new Date().toISOString().split("T")[0]+"T00:00:00Z").getTime();
+    const daysAgo=Math.round((todayMidnight-lrDate)/86400000);
+    if(daysAgo<1||daysAgo>2)return null; // Day 1: full · Day 2: short reminder · Day 3+: gone
+    if(daysAgo===1){
+      const template=CONVERSATION_TEMPLATES[lr.reflectionKey]||(t=>[`${t} was tough yesterday.`,"Let's recover those marks today."]);
+      return{tier:1,weakTopic:lr.weakTopic,sentences:template(lr.weakTopic)};
+    }
+    return{tier:2,weakTopic:lr.weakTopic,sentences:[`Still thinking about ${lr.weakTopic} from a couple days ago — let's keep building.`]};
+  },[user?.lastReflection]);
+  // Multi-sentence typewriter for the conversation banner — pauses now escalate
+  // by position (short → short → long) rather than a flat two-tier split, so the
+  // final, encouraging sentence gets noticeably more room to land.
+  const PAUSE_SHORT=250,PAUSE_MEDIUM=350,PAUSE_EMPHASIS=650;
+  const [typedConvo,setTypedConvo]=useState("");
+  useEffect(()=>{
+    if(!yesterdayConversation){setTypedConvo("");return;}
+    let cancelled=false;
+    setTypedConvo("");
+    (async()=>{
+      let acc="";
+      for(let s=0;s<yesterdayConversation.sentences.length;s++){
+        if(cancelled)return;
+        const isLast=s===yesterdayConversation.sentences.length-1;
+        const pause=isLast?PAUSE_EMPHASIS:s===0?PAUSE_SHORT:PAUSE_MEDIUM;
+        await new Promise(r=>setTimeout(r,pause));
+        if(cancelled)return;
+        const sentence=yesterdayConversation.sentences[s];
+        for(let i=1;i<=sentence.length;i++){
+          if(cancelled)return;
+          setTypedConvo((acc?acc+" ":"")+sentence.slice(0,i));
+          await new Promise(r=>setTimeout(r,22));
+        }
+        acc=(acc?acc+" ":"")+sentence;
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[yesterdayConversation]);
   // First session activation — show once per user
   const showActivation=useMemo(()=>{
     if(history.filter(isRealSession).length!==1)return false;
@@ -3794,6 +3876,11 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   },[history,userSubjects,user?.targetUniversity,user?.course]);
 
   const [typedText,setTypedText]=useState("");
+  // B.5 revised per review: Mission stays purely action-focused. The Conversation
+  // banner is the single place "yesterday" gets spoken — having Mission repeat it
+  // too was the "wallpaper" risk flagged in review (two elements narrating the same
+  // memory on one screen). Some mornings the mission says nothing about yesterday
+  // at all — that's the point.
   const coachMsg=missionList.length>0
     ?(uniData&&Number(gap)>0
       ?`${firstName?firstName+", ":""}you need +${gap} pts to reach ${uniData.shortName} ${targetCourse.split("/")[0].trim()}. Here's your fastest path.`
@@ -3870,6 +3957,65 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           </motion.div>
         )}
 
+        {/* ── B.5: CONTINUOUS CONVERSATION — memory spoken naturally, not labeled ── */}
+        {yesterdayConversation&&(
+          <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.35,ease:EASE}}
+            style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:13,fontStyle:"italic",color:T.text,lineHeight:1.6,minHeight:20}}>
+              {typedConvo}
+              {typedConvo.length<yesterdayConversation.sentences.join(" ").length&&<span style={{animation:"blink 0.8s step-end infinite"}}>▋</span>}
+            </div>
+            {yesterdayConversation.tier===1&&typedConvo.length>=yesterdayConversation.sentences.join(" ").length&&(
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}70`,letterSpacing:"0.1em",marginTop:8}}>→ {yesterdayConversation.weakTopic}</div>
+            )}
+          </motion.div>
+        )}
+
+        {/* ── TODAY'S MOVE — multi-topic fastest path ── */}
+        {hasData&&missionList.length>0&&(
+          <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:subjStagger,ease:EASE}} style={{marginBottom:16}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}60`,letterSpacing:"0.2em",marginBottom:8,paddingLeft:2}}>⚡ TODAY'S MOVE</div>
+            <div style={{background:dark?"rgba(184,151,62,0.05)":"rgba(184,151,62,0.07)",border:`1.5px solid rgba(184,151,62,0.25)`,borderRadius:16,padding:"18px 18px 16px"}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,marginBottom:14,minHeight:14}}>
+                {typedText}{typedText.length<coachMsg.length&&<span style={{animation:"blink 0.8s step-end infinite"}}>▋</span>}
+              </div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}60`,letterSpacing:"0.18em",marginBottom:8}}>FASTEST PATH</div>
+              {missionList.map((m,i)=>(
+                <div key={m.topic} style={{marginBottom:i<missionList.length-1?10:0,padding:"10px 12px",background:"rgba(0,0,0,0.12)",borderRadius:10,border:`1px solid ${m.isPreferred?"rgba(184,151,62,0.2)":T.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:m.isPreferred?T.gold:T.muted,letterSpacing:"0.1em",marginBottom:2}}>{m.subject.toUpperCase()}{m.isPreferred?" ★":""}</div>
+                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.topic}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0,marginLeft:12}}>
+                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:900,color:"#4ade80"}}>+{m.pointPotential}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}70`,letterSpacing:"0.08em"}}>PTS POTENTIAL</div>
+                    </div>
+                  </div>
+                  {m.accuracy!==null&&(
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}70`}}>
+                      Your accuracy: <span style={{color:"#f97316"}}>{m.accuracy}%</span>
+                      <span style={{color:`${T.muted}50`}}> → target </span>
+                      <span style={{color:"#4ade80"}}>60%</span>
+                      {m.isPreferred&&uniData&&<span style={{color:`${T.gold}80`}}> · {uniData.shortName} priority subject</span>}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}60`,margin:"12px 0",textAlign:"center"}}>
+                15 questions · ~25 min · start with {missionList[0]?.subject}
+              </div>
+              <motion.button whileTap={{scale:0.97}} onClick={()=>user?.isPremium?onNav("drill"):onUpgrade()}
+                style={{width:"100%",minHeight:52,padding:"0 24px",border:"none",borderRadius:26,
+                  background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",
+                  color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,
+                  cursor:"pointer",boxShadow:"0 4px 20px rgba(0,75,59,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {user?.isPremium?"Fix Topic →":"Unlock & Fix Topic →"}
+              </motion.button>
+            </div>
+          </motion.div>
+        )}
+
         {/* ── WHATSAPP BANNER — shown once for users without a number ── */}
         <WhatsAppBanner user={user} T={T} onSaved={onUpdateUser}/>
 
@@ -3880,6 +4026,9 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           const actions=calcNextActions(history,user,intel);
           const riskColor=intel.risk==="LOW"?"#4ade80":intel.risk==="MODERATE"?"#f97316":intel.risk==="HIGH"?"#ef4444":"#dc2626";
           const riskBg=intel.risk==="LOW"?"rgba(74,222,128,0.08)":intel.risk==="MODERATE"?"rgba(249,115,22,0.08)":intel.risk==="HIGH"?"rgba(239,68,68,0.08)":"rgba(220,38,38,0.10)";
+          // Display label only — intel.risk itself stays untouched since other
+          // logic (locked recovery plan gate, founder analytics) reads the raw value.
+          const riskLabel=intel.risk==="LOW"?"ON TRACK":intel.risk==="MODERATE"?"KEEP BUILDING":intel.risk==="HIGH"?"ATTENTION NEEDED":"BIGGEST OPPORTUNITY";
           const topAction=actions[0];
           return(
             <div className="fi1" style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:"18px",marginBottom:14,position:"relative",overflow:"hidden"}}>
@@ -3888,21 +4037,31 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
                 <div>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:4}}>CREDIQ READINESS</div>
-                  <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:38,fontWeight:900,color:"#F7F3EC",lineHeight:1}}>{intel.score}</div>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>/100</div>
-                  </div>
+                  {hasData?(
+                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:38,fontWeight:900,color:"#F7F3EC",lineHeight:1}}>{intel.score}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>/100</div>
+                    </div>
+                  ):(
+                    <div>
+                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:T.gold}}>Journey Started</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Next milestone: your first session</div>
+                    </div>
+                  )}
                 </div>
+                {hasData&&(
                 <div style={{textAlign:"right"}}>
                   <div style={{background:riskBg,border:`1px solid ${riskColor}40`,borderRadius:20,padding:"4px 12px",marginBottom:6}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:riskColor,fontWeight:700,letterSpacing:"0.12em"}}>{intel.risk} RISK</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:riskColor,fontWeight:700,letterSpacing:"0.12em"}}>{riskLabel}</span>
                   </div>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.6}}>
                     <span style={{color:"#F7F3EC",fontWeight:600}}>{intel.probability}%</span> chance of<br/>hitting your cut-off
                   </div>
                 </div>
+                )}
               </div>
               {/* Mini metric row */}
+              {hasData&&(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
                 {[
                   {label:"ACCURACY",val:`${intel.avgAccuracy}%`},
@@ -3915,6 +4074,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                   </div>
                 ))}
               </div>
+              )}
               {/* Trajectory projection */}
               {trajectory&&(
                 <div style={{background:"rgba(74,222,128,0.05)",border:"1px solid rgba(74,222,128,0.18)",borderRadius:8,padding:"7px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -4025,7 +4185,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                   <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:5}}>
                     <div style={{fontFamily:"'Playfair Display',serif",fontSize:52,fontWeight:900,color:"rgba(184,151,62,0.35)",lineHeight:1}}>0.0</div>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.45)",letterSpacing:"0.1em"}}>/ {targetPts} pts</div>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.32)",letterSpacing:"0.12em",marginTop:3}}>NOT STARTED</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.32)",letterSpacing:"0.12em",marginTop:3}}>READY TO BEGIN</div>
                   </div>
                 </div>
               </div>
@@ -4139,51 +4299,6 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
             </>
           )}
         </motion.div>
-
-        {/* ── TODAY'S MOVE — multi-topic fastest path ── */}
-        {hasData&&missionList.length>0&&(
-          <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:subjStagger,ease:EASE}} style={{marginBottom:16}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}60`,letterSpacing:"0.2em",marginBottom:8,paddingLeft:2}}>⚡ TODAY'S MOVE</div>
-            <div style={{background:dark?"rgba(184,151,62,0.05)":"rgba(184,151,62,0.07)",border:`1.5px solid rgba(184,151,62,0.25)`,borderRadius:16,padding:"18px 18px 16px"}}>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,marginBottom:14,minHeight:14}}>
-                {typedText}{typedText.length<coachMsg.length&&<span style={{animation:"blink 0.8s step-end infinite"}}>▋</span>}
-              </div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}60`,letterSpacing:"0.18em",marginBottom:8}}>FASTEST PATH</div>
-              {missionList.map((m,i)=>(
-                <div key={m.topic} style={{marginBottom:i<missionList.length-1?10:0,padding:"10px 12px",background:"rgba(0,0,0,0.12)",borderRadius:10,border:`1px solid ${m.isPreferred?"rgba(184,151,62,0.2)":T.border}`}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:m.isPreferred?T.gold:T.muted,letterSpacing:"0.1em",marginBottom:2}}>{m.subject.toUpperCase()}{m.isPreferred?" ★":""}</div>
-                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.topic}</div>
-                    </div>
-                    <div style={{textAlign:"right",flexShrink:0,marginLeft:12}}>
-                      <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:900,color:"#4ade80"}}>+{m.pointPotential}</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:`${T.muted}70`,letterSpacing:"0.08em"}}>PTS POTENTIAL</div>
-                    </div>
-                  </div>
-                  {m.accuracy!==null&&(
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}70`}}>
-                      Your accuracy: <span style={{color:"#f97316"}}>{m.accuracy}%</span>
-                      <span style={{color:`${T.muted}50`}}> → target </span>
-                      <span style={{color:"#4ade80"}}>60%</span>
-                      {m.isPreferred&&uniData&&<span style={{color:`${T.gold}80`}}> · {uniData.shortName} priority subject</span>}
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}60`,margin:"12px 0",textAlign:"center"}}>
-                15 questions · ~25 min · start with {missionList[0]?.subject}
-              </div>
-              <motion.button whileTap={{scale:0.97}} onClick={()=>user?.isPremium?onNav("drill"):onUpgrade()}
-                style={{width:"100%",minHeight:52,padding:"0 24px",border:"none",borderRadius:26,
-                  background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",
-                  color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,
-                  cursor:"pointer",boxShadow:"0 4px 20px rgba(0,75,59,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {user?.isPremium?"Fix Topic →":"Unlock & Fix Topic →"}
-              </motion.button>
-            </div>
-          </motion.div>
-        )}
 
         {/* ── YOUR BIGGEST BATTLES ── */}
         {hasData&&blockersBySubject.length>0&&(
@@ -4823,6 +4938,44 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
   // Keep answersRef current so the auto-submit timer always reads latest answers
   useEffect(()=>{answersRef.current=answers;},[answers]);
 
+  // B.4 — Cognitive Signals: objective, observed-only. No interpretation yet.
+  const currentRef=useRef(current);
+  useEffect(()=>{currentRef.current=current;},[current]);
+  const questionFirstSeenRef=useRef({});      // index -> timestamp of first-ever view
+  const questionEnterTimeRef=useRef({});      // index -> timestamp entered on the current visit
+  const questionTotalTimeRef=useRef({});      // index -> accumulated seconds across all visits
+  const questionFirstAnswerTimeRef=useRef({});// index -> seconds from first-seen to first answer
+  const questionAnswerChangesRef=useRef({});  // index -> count of changes after the first answer
+  const questionVisitCountRef=useRef({});     // index -> number of times this question was viewed
+
+  // Track entry/exit per question so total time and revisits are accurate regardless of nav direction
+  useEffect(()=>{
+    const idx=current;
+    const now=Date.now();
+    questionEnterTimeRef.current[idx]=now;
+    questionVisitCountRef.current[idx]=(questionVisitCountRef.current[idx]||0)+1;
+    if(questionFirstSeenRef.current[idx]===undefined)questionFirstSeenRef.current[idx]=now;
+    return()=>{
+      const enter=questionEnterTimeRef.current[idx];
+      if(enter){
+        const elapsed=(Date.now()-enter)/1000;
+        questionTotalTimeRef.current[idx]=(questionTotalTimeRef.current[idx]||0)+elapsed;
+      }
+    };
+  },[current]);
+
+  // Flushes the in-progress visit's time into the accumulator — needed because handleSubmit
+  // can fire mid-visit (button click or auto-submit), before the effect cleanup above would run.
+  const flushCurrentQuestionTime=()=>{
+    const idx=currentRef.current;
+    const enter=questionEnterTimeRef.current[idx];
+    if(enter){
+      const elapsed=(Date.now()-enter)/1000;
+      questionTotalTimeRef.current[idx]=(questionTotalTimeRef.current[idx]||0)+elapsed;
+      questionEnterTimeRef.current[idx]=null; // prevent double-counting if cleanup also fires
+    }
+  };
+
   const fmt=s=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   const q=questions[current];
   const answeredCount=Object.keys(answers).length;
@@ -4837,6 +4990,8 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
   // handleSubmit reads from ref so it's safe to call from stale closures (e.g. timer)
   const handleSubmit=useCallback(()=>{
     clearInterval(timerRef.current);
+    flushCurrentQuestionTime();
+    const submitTimestamp=new Date().toISOString();
     const latestAnswers=answersRef.current;
     const duration=Math.round((Date.now()-startTime)/1000);
     let correct=0;const wrongTopics=[];
@@ -4846,11 +5001,19 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
       const opts=q.options&&typeof q.options==="object"?q.options:{};
       const userAnswerText=ua?(opts[ua]??opts[normAnswerKey(ua)]??null):null;
       const correctAnswerText=opts[q.correctAnswer]??opts[normAnswerKey(q.correctAnswer)]??null;
-      return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua||null,userAnswerText,correctAnswer:q.correctAnswer,correctAnswerText,explanation:q.explanation||""};
+      const totalTime=questionTotalTimeRef.current[i]?Math.round(questionTotalTimeRef.current[i]*10)/10:0;
+      return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua||null,userAnswerText,correctAnswer:q.correctAnswer,correctAnswerText,explanation:q.explanation||"",
+        // B.4 — Cognitive Signals (observed only, no interpretation)
+        firstAnswerTime:questionFirstAnswerTimeRef.current[i]??null,
+        totalTime,timeSpent:totalTime, // timeSpent kept for existing analytics reads (avgTimeWrong/avgTimeRight etc.)
+        answerChanges:questionAnswerChangesRef.current[i]||0,
+        skipped:!ua,
+        revisited:(questionVisitCountRef.current[i]||0)>1,
+      };
     });
     const total=questions.length,pct=Math.round((correct/total)*100);
     track("exam_completed",{uid:userUidRef.current,subject,pct,grade:grade(pct),duration});
-    onEnd({subject:subject==="mixed"?"Mixed":subject,year:year==="all"?"All Years":year,mode,correct,total,pct,grade:grade(pct),wrongTopics:[...new Set(wrongTopics)],questionResults:qResults,duration,date:new Date().toISOString()});
+    onEnd({subject:subject==="mixed"?"Mixed":subject,year:year==="all"?"All Years":year,mode,correct,total,pct,grade:grade(pct),wrongTopics:[...new Set(wrongTopics)],questionResults:qResults,duration,date:new Date().toISOString(),submitTimestamp});
   },[questions,subject,year,mode,startTime,onEnd]);
 
   useEffect(()=>{
@@ -4860,24 +5023,36 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
 
   const handleAnswer=opt=>{
     const isNew=answers[current]===undefined;
+    // B.4 — Cognitive Signals: record on the same "isNew" check the limit logic already uses
+    if(isNew){
+      const firstSeen=questionFirstSeenRef.current[current]||Date.now();
+      questionFirstAnswerTimeRef.current[current]=Math.round(((Date.now()-firstSeen)/1000)*10)/10;
+    }else{
+      questionAnswerChangesRef.current[current]=(questionAnswerChangesRef.current[current]||0)+1;
+    }
     // Mid-exam limit check — only applies to drill mode (mock exams are free diagnostic, never interrupted)
     if(!user?.isPremium&&isNew&&mode==="drill"){
       const usedSoFar=(user?.questionsToday||0)+Object.keys(answers).length+1;
       if(usedSoFar>FREE_DAILY_LIMIT){
         clearInterval(timerRef.current);
+        flushCurrentQuestionTime();
         const finalAnswers={...answers,[current]:opt};
         const duration=Math.round((Date.now()-startTime)/1000);
         let correct=0;const wrongTopics=[];
         const qResults=Object.entries(finalAnswers)
           .sort((a,b)=>parseInt(a[0])-parseInt(b[0]))
           .map(([idx,ua])=>{
-            const q=questions[parseInt(idx)];
+            const i=parseInt(idx);
+            const q=questions[i];
             const ok=answersMatch(ua,q.correctAnswer);
             if(ok)correct++;else if(q.topic&&q.topic!=="Uncategorized")wrongTopics.push(q.topic);
             const opts=q.options&&typeof q.options==="object"?q.options:{};
             const userAnswerText=ua?(opts[ua]??opts[normAnswerKey(ua)]??null):null;
             const correctAnswerText=opts[q.correctAnswer]??opts[normAnswerKey(q.correctAnswer)]??null;
-            return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua,userAnswerText,correctAnswer:q.correctAnswer,correctAnswerText,explanation:q.explanation||"",timeSpent:0};
+            const totalTime=questionTotalTimeRef.current[i]?Math.round(questionTotalTimeRef.current[i]*10)/10:0;
+            return{questionId:q.id,question:q.question,topic:q.topic,correct:ok,userAnswer:ua,userAnswerText,correctAnswer:q.correctAnswer,correctAnswerText,explanation:q.explanation||"",
+              firstAnswerTime:questionFirstAnswerTimeRef.current[i]??null,totalTime,timeSpent:totalTime,
+              answerChanges:questionAnswerChangesRef.current[i]||0,skipped:!ua,revisited:(questionVisitCountRef.current[i]||0)>1};
           });
         const total=qResults.length;
         const pct=Math.round((correct/total)*100);
@@ -4887,7 +5062,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
           mode,correct,total,pct,grade:grade(pct),
           wrongTopics:[...new Set(wrongTopics)],
           questionResults:qResults,
-          duration,date:new Date().toISOString(),hitLimit:true,
+          duration,date:new Date().toISOString(),hitLimit:true,submitTimestamp:new Date().toISOString(),
         });
         return;
       }
@@ -5243,12 +5418,60 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
 function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();}
 
 // ─── RESULTS SCREEN ───────────────────────────────────────────────────────────
-function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,T,onUpgrade}) {
+function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,T,onUpgrade,onUpdateUser}) {
   const {subject,year,correct,total,pct,wrongTopics,questionResults,mode,preReadiness=0,postReadiness=0,hitLimit=false,confidence=null}=result;
   const readinessDelta=postReadiness-preReadiness;
   const g=grade(pct),gc=gradeColor(g,T);
   const [showReview,setShowReview]=useState(false);
   const [showShareModal,setShowShareModal]=useState(false);
+  // B.5 Part 4 — Results closes the conversation: only speaks about yesterday if
+  // today's session genuinely touched that same topic. Never fabricate a connection.
+  const loopClosing=(()=>{
+    const lr=user?.lastReflection;
+    if(!lr?.date||!lr?.weakTopic)return null;
+    const yesterdayStr=new Date(Date.now()-86400000).toISOString().split("T")[0];
+    if(lr.date!==yesterdayStr)return null;
+    const todaysTopics=(questionResults||[]).map(q=>q.topic);
+    if(!todaysTopics.includes(lr.weakTopic))return null;
+    const stillWrong=(wrongTopics||[]).includes(lr.weakTopic);
+    return{topic:lr.weakTopic,recovered:!stillWrong};
+  })();
+  // B.3 — Promise Engine v1 (Reflection)
+  const [reflectionSaved,setReflectionSaved]=useState(false);
+  const [savingReflection,setSavingReflection]=useState(false);
+  const REFLECTION_OPTIONS=[
+    {key:"topic",emoji:"📚",label:"I didn't understand the topic"},
+    {key:"rushed",emoji:"⏰",label:"I rushed"},
+    {key:"confidence",emoji:"😕",label:"I wasn't confident"},
+    {key:"guessed",emoji:"🤔",label:"I guessed too much"},
+  ];
+  const saveReflection=async(option)=>{
+    if(savingReflection||!user?.uid)return;
+    setSavingReflection(true);
+    const todayStr=new Date().toISOString().split("T")[0];
+    const reflectionWeakTopic=sortedWrongTopics[0]?.[0]||wrongTopics?.[0]||subject;
+    const lastReflection={date:todayStr,weakTopic:reflectionWeakTopic,reflection:option.label,reflectionKey:option.key};
+    try{
+      await Promise.all([
+        // Convenience field — cheap single-read for tomorrow's Dashboard banner
+        updateDoc(doc(db,"users",user.uid),{lastReflection}),
+        // Permanent history — every reflection preserved, not overwritten. This is what makes
+        // future questions like "does 'I rushed' correlate with low scores?" answerable at all.
+        addDoc(collection(db,"reflections"),{
+          uid:user.uid,date:todayStr,weakTopic:reflectionWeakTopic,
+          reflection:option.label,reflectionKey:option.key,
+          subject,pct,sessionId:result?.sessionId||null,createdAt:serverTimestamp(),
+        }),
+      ]);
+      onUpdateUser&&onUpdateUser({...user,lastReflection});
+      setReflectionSaved(true);
+    }catch(e){
+      // Non-blocking — reflection is a nice-to-have memory signal, never worth failing the results screen over
+      setReflectionSaved(true);
+    }finally{
+      setSavingReflection(false);
+    }
+  };
   const isCelebration=pct>=60;
   const EASE=[0.16,1,0.3,1];
   const baseCopy=CELEBRATE_COPY[user?.course]||CELEBRATE_COPY["Other"];
@@ -5393,18 +5616,28 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
         <div className="fi1" style={{textAlign:"center",marginBottom:6}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,letterSpacing:"0.22em"}}>— SESSION COMPLETE —</div>
         </div>
-        {/* Coach voice: lead with diagnosis on bad sessions, not just the grade */}
-        {!isCelebration&&(
-          <motion.div className="fi1" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}} transition={{duration:0.4,ease:EASE}}
-            style={{background:"rgba(184,151,62,0.05)",border:"1px solid rgba(184,151,62,0.18)",borderRadius:12,padding:"14px 16px",marginBottom:14,textAlign:"center"}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,marginBottom:4}}>
-              {pct<40?"Rough one. But we found exactly where the gap is.":pct<60?"Close. The gap is clear — let's close it.":"Almost there. Fix one more topic."}
-            </div>
+        {/* B.2: Celebrate first — showing up matters regardless of score */}
+        <motion.div className="fi1" initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.35,ease:EASE}}
+          style={{textAlign:"center",marginBottom:10}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold}}>🔥 You finished another practice session.</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>
+            Great work showing up today{uniShortName?` — one step closer to ${uniShortName}`:""}.
+          </div>
+        </motion.div>
+        {/* B.2: Explain what happened — narrative before the number, on every result */}
+        <motion.div className="fi1" initial={{opacity:0,y:12}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:0.12,ease:EASE}}
+          style={{background:"rgba(184,151,62,0.05)",border:"1px solid rgba(184,151,62,0.18)",borderRadius:12,padding:"14px 16px",marginBottom:14,textAlign:"center"}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,marginBottom:4}}>
+            {isCelebration
+              ?(sortedWrongTopics[0]?`Strong session. A few slips came from ${sortedWrongTopics[0][0]}.`:"Strong session — barely a mistake in sight.")
+              :(pct<40?"Rough one. But we found exactly where the gap is.":pct<60?"Close. The gap is clear — let's close it.":"Almost there. Fix one more topic.")}
+          </div>
+          {!isCelebration&&(
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}80`}}>
               {sortedWrongTopics[0]?`${sortedWrongTopics[0][0]} is your biggest cost today.`:"Review the questions below to find your gap."}
             </div>
-          </motion.div>
-        )}
+          )}
+        </motion.div>
         {/* Fix 6: clearly label mixed sessions so they're never confused with real JUPEB performance */}
         {subject==="Mixed"&&(
           <div className="fi1" style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:9,padding:"10px 14px",marginBottom:12,textAlign:"center"}}>
@@ -5439,7 +5672,6 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
                 :`Score estimate: ${postReadiness}%`}
             </div>
           )}
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,color:T.text,fontStyle:"italic"}}>{isCelebration?copy.win:copy.push}</div>
         </div>
 
         {/* ── PHASE 3: CONFIDENCE vs PERFORMANCE ── */}
@@ -5472,14 +5704,32 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
         })()}
 
         {sortedWrongTopics.length>0&&!isCelebration&&(
-          <div className="fi4" style={{background:`${T.danger}08`,border:`1px solid ${T.danger}25`,borderRadius:9,padding:"13px 15px",marginBottom:12}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.danger,letterSpacing:"0.12em",marginBottom:10}}>SCORE BLOCKERS — these cost you marks today</div>
+          <div className="fi4" style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.22)",borderRadius:9,padding:"13px 15px",marginBottom:12}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold,letterSpacing:"0.12em",marginBottom:10}}>⚡ BIGGEST OPPORTUNITY TODAY</div>
             {sortedWrongTopics.slice(0,4).map(([t,c])=>(
               <div key={t} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7,padding:"8px 10px",background:T.surface,borderRadius:6}}>
                 <div><div style={{fontSize:13,color:T.text,fontWeight:500}}>{t}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted}}>{c} question{c!==1?"s":""} missed</div></div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,background:`${T.danger}15`,borderRadius:4,padding:"3px 7px"}}>FIX THIS</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,background:`${T.gold}15`,borderRadius:4,padding:"3px 7px"}}>RECOVERABLE</div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── PHASE 3: CONFIDENCE vs PERFORMANCE placement note: card itself unchanged, lives above ── */}
+
+        {wrongTopics?.length>0&&(
+          <div className="fi4" style={{background:"rgba(184,151,62,0.06)",border:"1.5px solid rgba(184,151,62,0.25)",borderRadius:12,padding:"16px 16px",marginBottom:12}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(184,151,62,0.6)",letterSpacing:"0.16em",marginBottom:8}}>⚡ RECOVER THESE MARKS</div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,color:T.text,marginBottom:4}}>
+              <span style={{color:T.warn,fontWeight:700}}>{wrongTopics[0]}</span> is your biggest opportunity right now.
+              {wrongTopics[1]&&<> <span style={{color:"rgba(247,243,236,0.4)"}}>Also: </span><span style={{color:T.gold,fontWeight:600}}>{wrongTopics[1]}</span>.</>}
+            </div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,marginBottom:12,lineHeight:1.6}}>
+              Fixing this one topic is the fastest path to your next grade letter.
+            </div>
+            <button className="btn-press" onClick={()=>onDrill&&onDrill()} style={{width:"100%",padding:"11px 0",border:"none",borderRadius:8,background:"linear-gradient(135deg,rgba(184,151,62,0.9),rgba(138,106,30,0.9))",color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+              <Target size={12}/> 🔥 RECOVER THESE MARKS →
+            </button>
           </div>
         )}
 
@@ -5489,22 +5739,6 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
             <MessageCircle size={14}/> SHARE YOUR RESULT
           </button>
         </div>
-
-        {wrongTopics?.length>0&&(
-          <div className="fi4" style={{background:"rgba(184,151,62,0.06)",border:"1.5px solid rgba(184,151,62,0.25)",borderRadius:12,padding:"16px 16px",marginBottom:12}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(184,151,62,0.6)",letterSpacing:"0.16em",marginBottom:8}}>⚡ NEXT BEST ACTION</div>
-            <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,color:T.text,marginBottom:4}}>
-              <span style={{color:T.warn,fontWeight:700}}>{wrongTopics[0]}</span> is your biggest score blocker right now.
-              {wrongTopics[1]&&<> <span style={{color:"rgba(247,243,236,0.4)"}}>Also: </span><span style={{color:T.gold,fontWeight:600}}>{wrongTopics[1]}</span>.</>}
-            </div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,marginBottom:12,lineHeight:1.6}}>
-              Fixing this one topic is the fastest path to your next grade letter.
-            </div>
-            <button className="btn-press" onClick={()=>onDrill&&onDrill()} style={{width:"100%",padding:"11px 0",border:"none",borderRadius:8,background:"linear-gradient(135deg,rgba(249,115,22,0.85),rgba(192,57,43,0.85))",color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-              <Target size={12}/> FIX {wrongTopics[0].toUpperCase().slice(0,22)} NOW →
-            </button>
-          </div>
-        )}
 
         {/* ── CONVERSION HOOK — bad score, non-premium ── */}
         {!user?.isPremium&&pct<50&&(
@@ -5527,6 +5761,48 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
             </button>
           </motion.div>
         )}
+
+        {/* B.3 — Promise Engine v1: Reflection (one tap, no typing) */}
+        <div className="fi4" style={{background:"rgba(184,151,62,0.05)",border:"1px solid rgba(184,151,62,0.18)",borderRadius:12,padding:"16px",marginBottom:16}}>
+          {reflectionSaved?(
+            <div style={{textAlign:"center",padding:"4px 0"}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#4ade80"}}>✓ Got it — we'll remember that tomorrow.</div>
+            </div>
+          ):(
+            <>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.gold}90`,letterSpacing:"0.14em",marginBottom:10,textAlign:"center"}}>REFLECTION</div>
+              <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,color:T.text,textAlign:"center",marginBottom:12}}>
+                What challenged you the most today?
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {REFLECTION_OPTIONS.map(opt=>(
+                  <button key={opt.key} className="btn-press" disabled={savingReflection} onClick={()=>saveReflection(opt)}
+                    style={{padding:"10px 8px",border:`1px solid ${T.border}`,borderRadius:9,background:"rgba(0,0,0,0.1)",
+                      color:T.text,fontFamily:"'DM Mono',monospace",fontSize:9,cursor:savingReflection?"default":"pointer",
+                      textAlign:"center",lineHeight:1.4,opacity:savingReflection?0.6:1}}>
+                    <div style={{fontSize:16,marginBottom:4}}>{opt.emoji}</div>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* B.2/B.5: End with hope — closes the loop back to yesterday when genuine, otherwise the existing hope line */}
+        <div className="fi4" style={{textAlign:"center",marginBottom:16}}>
+          {loopClosing?(
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,color:T.text,fontStyle:"italic",lineHeight:1.6}}>
+              {loopClosing.recovered
+                ?<>Yesterday {loopClosing.topic} worried you.<br/>Today you recovered those marks.</>
+                :<>Yesterday {loopClosing.topic} caught you off guard.<br/>You're closer now — we'll finish it tomorrow.</>}
+            </div>
+          ):(
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,color:T.text,fontStyle:"italic"}}>
+              {isCelebration?copy.win:copy.push}
+            </div>
+          )}
+        </div>
 
         <div className="fi5" style={{display:"flex",flexDirection:"column",gap:8}}>
           <BtnPrimary onClick={onRetry} T={T}>{isCelebration?"Practice Again":"Retake. Fix the score."}</BtnPrimary>
@@ -6575,6 +6851,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[auditing,setAuditing]=useState(false);
   const[auditResults,setAuditResults]=useState(null); // null=not run, [] = clean, [...] = mismatches
   const[auditError,setAuditError]=useState("");
+  const[semanticResults,setSemanticResults]=useState(null); // null=not run, [] = none flagged, [...] = possible mismatches
   const isDesktop=useIsDesktop(900);
 
   const load=useCallback(async(isRefresh)=>{
@@ -6657,6 +6934,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
     setAuditing(true);setAuditError("");
     try{
       const flagged=[];
+      const semanticFlags=[];
       for(const colName of["questions","theoryQuestions"]){
         let snap;
         try{ snap=await getDocs(collection(db,colName)); }catch{ continue; } // collection may not exist
@@ -6665,6 +6943,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
           if(!q.options||typeof q.options!=="object")return; // theory Qs etc without MCQ options
           const keys=Object.keys(q.options).map(k=>normAnswerKey(k));
           const ca=normAnswerKey(q.correctAnswer);
+
+          // Structural check — does correctAnswer even point to a real option?
           if(!ca||!keys.includes(ca)){
             flagged.push({
               id:d.id,collection:colName,subject:q.subject||"",topic:q.topic||"",
@@ -6672,10 +6952,45 @@ function FounderDashboardScreen({onBack,T,showToast}){
               optionKeys:Object.keys(q.options).join(", "),
               question:(q.question||"").slice(0,80),
             });
+            return; // no point running the semantic check on a structurally broken one
+          }
+
+          // Semantic check — does correctAnswer point to the RIGHT option?
+          // Cross-references explanation text against every option's text using
+          // COVERAGE (% of the option's own words found in the explanation) —
+          // not a raw count, because many options are a single word ("Sandal",
+          // "Staff") and would never reach a 2+ raw-count threshold even on a
+          // perfect match. Stemming handles singular/plural mismatches like
+          // explanation "sandals" vs option "Sandal".
+          if(q.explanation&&q.explanation.trim().length>15){
+            const expTokens=new Set(tokenize(q.explanation));
+            if(expTokens.size>=2){
+              const scores=Object.entries(q.options).map(([k,v])=>({key:k,coverage:optionCoverage(expTokens,v)}));
+              const best=scores.reduce((a,b)=>b.coverage>a.coverage?b:a,scores[0]);
+              const currentEntry=scores.find(s=>normAnswerKey(s.key)===ca);
+              const currentCoverage=currentEntry?currentEntry.coverage:0;
+              // Flag when the best-matching option covers at least half its
+              // own words in the explanation, AND clearly beats whichever
+              // option is currently marked correct.
+              if(best.coverage>=0.5&&best.coverage>currentCoverage+0.15&&normAnswerKey(best.key)!==ca){
+                semanticFlags.push({
+                  id:d.id,collection:colName,subject:q.subject||"",topic:q.topic||"",
+                  question:(q.question||"").slice(0,100),
+                  currentCorrect:q.correctAnswer,
+                  currentCorrectText:currentEntry?q.options[currentEntry.key]:"",
+                  suggestedCorrect:best.key,
+                  suggestedCorrectText:q.options[best.key],
+                  explanation:(q.explanation||"").slice(0,160),
+                  confidence:Math.round((best.coverage-currentCoverage)*100),
+                });
+              }
+            }
           }
         });
       }
+      semanticFlags.sort((a,b)=>b.confidence-a.confidence);
       setAuditResults(flagged);
+      setSemanticResults(semanticFlags);
     }catch(e){setAuditError(e?.message||"Audit failed — check Firestore rules/connection.");}
     finally{setAuditing(false);}
   },[]);
@@ -7694,7 +8009,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
             {tab==="audit"&&(
               <div style={{maxWidth:700}}>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>
-                  ANSWER-KEY AUDIT · checks every question's correctAnswer against its options
+                  ANSWER-KEY AUDIT · checks structural validity + cross-references explanations to catch wrong-but-valid correctAnswer values
                 </div>
                 <button onClick={runAnswerAudit} disabled={auditing} className="btn-press" style={{
                   width:"100%",padding:"14px 0",border:"none",borderRadius:10,
@@ -7726,6 +8041,50 @@ function FounderDashboardScreen({onBack,T,showToast}){
                       ))}
                     </>
                   )
+                )}
+
+                {/* ── SEMANTIC MISMATCH AUDIT — catches "correctAnswer points to the WRONG option" ── */}
+                {semanticResults!==null&&!auditError&&(
+                  <div style={{marginTop:28}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:6}}>
+                      SEMANTIC MISMATCH CHECK · cross-references explanation text vs option text
+                    </div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}80`,marginBottom:14,lineHeight:1.7}}>
+                      Catches cases where correctAnswer points to a real option letter — but the WRONG one.
+                      This is a heuristic, not a guarantee. Review each one before editing Firestore.
+                    </div>
+                    {semanticResults.length===0?(
+                      <div style={{textAlign:"center",padding:"20px 20px",fontFamily:"'DM Mono',monospace",fontSize:11,color:"#4ade80"}}>
+                        ✓ No likely mismatches found in questions with explanations.
+                      </div>
+                    ):(
+                      <>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#f97316",marginBottom:12,fontWeight:700}}>
+                          ⚠ {semanticResults.length} possible mismatch{semanticResults.length!==1?"es":""} — sorted by confidence, review top ones first
+                        </div>
+                        {semanticResults.slice(0,150).map((r,i)=>(
+                          <div key={i} style={{background:T.surface,border:"1px solid rgba(249,115,22,0.3)",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginBottom:4}}>{r.collection} / {r.id} · {r.subject} {r.topic?`· ${r.topic}`:""} · confidence +{r.confidence}%</div>
+                            <div style={{fontSize:12,color:T.text,marginBottom:8,lineHeight:1.5}}>{r.question}{r.question.length>=100?"…":""}</div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:3}}>
+                              Currently marked correct: <strong>{r.currentCorrect}</strong> — "{r.currentCorrectText}"
+                            </div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4ade80",marginBottom:8}}>
+                              Explanation suggests: <strong>{r.suggestedCorrect}</strong> — "{r.suggestedCorrectText}"
+                            </div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}80`,fontStyle:"italic"}}>
+                              "{r.explanation}{r.explanation.length>=160?"…":""}"
+                            </div>
+                          </div>
+                        ))}
+                        {semanticResults.length>150&&(
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,textAlign:"center",padding:"12px 0"}}>
+                            + {semanticResults.length-150} more not shown — fix the top ones first, then re-run.
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -9537,7 +9896,10 @@ export default function App() {
         PendingSessions.push(user.uid,{...sessionPayload,backupId});
 
         // 1. Save enhanced session to Firestore
-        await saveSession(user.uid,sessionPayload);
+        const sessionRef=await saveSession(user.uid,sessionPayload);
+        // Backfill sessionId onto the already-rendered result so Reflection can join back to it later.
+        // Results screen is already showing by this point — this just attaches the ID a moment after.
+        if(sessionRef?.id)setExamResult(prev=>prev?{...prev,sessionId:sessionRef.id}:prev);
 
         // Fix 3b: Firestore write succeeded — clear the localStorage backup
         PendingSessions.remove(backupId);
@@ -9860,7 +10222,7 @@ export default function App() {
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
-          {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}
           {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {screen==="ambassador"&&user&&<AmbassadorScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}

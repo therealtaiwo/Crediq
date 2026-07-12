@@ -1205,6 +1205,88 @@ function tokenize(text){
 // Using coverage instead of a raw count means short options (many quiz options
 // are a single word like "Sandal" or "Staff") can still score a clean 100%
 // match instead of being unfairly penalized against longer options.
+// Word-overlap scoring only works for prose-style answers ("Sandal", "Federalism").
+// It breaks on numbers, currency, and short technical codes — a single garbled
+// character ("₦12,418" → "W12418") or a missing space ("IAS2" vs "IAS 2") is
+// enough to flip the result, and numbers merely MENTIONED in an explanation's
+// working (e.g. an input value) can outscore the actual computed answer.
+// So: skip the semantic check entirely when most of a question's options look
+// numeric/currency/code-like — that's a different problem needing a different
+// tool (recomputing the answer, not comparing words), not something we should
+// guess at with prose-matching.
+function looksNumericOrCode(text){
+  const s=String(text||"").trim();
+  if(!s)return true;
+  if(/^[₦$#]?[\d,]+(\.\d+)?%?$/.test(s))return true;       // ₦12,418 · 20,000 · 10% · 648
+  if(/^[A-Za-z]{1,6}[\s-]?\d{1,6}$/.test(s))return true;    // IAS2 · IAS 15 · IFRS 9 · M648 · W12418
+  if(s.replace(/[^0-9]/g,"").length/Math.max(1,s.length)>0.4)return true; // digit-heavy strings
+  return false;
+}
+
+// ─── NUMERIC ANSWER CHECKER ─────────────────────────────────────────────────
+// Two different techniques for the two ways numeric/code answers break —
+// word-overlap can't handle either one, so this isn't a variant of that check,
+// it's a separate tool:
+//
+// A) CURRENCY/NUMBER options → find the LAST "= <number>" in the explanation
+//    (the final computed result in a step-by-step working) and compare
+//    DIGITS ONLY — this survives OCR corruption too, since "₦12,418" stored
+//    as "W12418" still normalizes to the same digit string "12418".
+// B) CODE-STYLE options ("IAS2", "IAS 15") → strip ALL whitespace from both
+//    the option and the explanation, then check literal substring containment
+//    — this survives spacing differences that break word-tokenization
+//    ("IAS2" vs "IAS 2" look identical once spaces are stripped).
+//
+// Both are deliberately conservative: ambiguous cases return null (skip)
+// rather than force a guess.
+function isCurrencyOrNumber(s){
+  const t=String(s||"").trim();
+  if(/^[₦$#]?[\d,]+(\.\d+)?%?$/.test(t))return true;       // clean: ₦12,418 · 20,000 · 10%
+  if(/^[A-Za-z][\d,]{3,}$/.test(t))return true;             // 1 garbled currency symbol + 3+ digit amount: W12418 · M648
+  return false;
+}
+function isCodeLike(s){
+  return/^[A-Za-z]{2,6}[\s-]?\d{1,6}$/.test(String(s||"").trim()); // real codes need 2+ letters: IAS2 · IAS 15 · IFRS 9
+}
+function digitsOnly(s){return String(s||"").replace(/[^\d]/g,"");}
+function compactAlnum(s){return String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");}
+
+function extractFinalComputedNumber(text){
+  const matches=[...String(text||"").matchAll(/=\s*[₦$#]?\s*[\d][\d,]*\.?\d*%?/g)];
+  if(!matches.length)return null;
+  const last=matches[matches.length-1][0];
+  const digits=digitsOnly(last);
+  return digits.length?digits:null;
+}
+
+function checkNumericMismatch(q,ca){
+  const entries=Object.entries(q.options);
+  if(!entries.length)return null;
+  const allCurrency=entries.every(([,v])=>isCurrencyOrNumber(v));
+  const allCode=entries.every(([,v])=>isCodeLike(v));
+
+  if(allCurrency){
+    const target=extractFinalComputedNumber(q.explanation);
+    if(!target)return null;
+    const matches=entries.filter(([,v])=>digitsOnly(v)===target);
+    if(matches.length!==1)return null; // ambiguous or nothing matched exactly — don't guess
+    const[bestKey]=matches[0];
+    if(normAnswerKey(bestKey)===ca)return null; // already correct
+    return{suggestedKey:bestKey,method:"Computed value",evidence:`Explanation computes to ${target}`};
+  }
+
+  if(allCode){
+    const compactExp=compactAlnum(q.explanation);
+    if(compactExp.length<10)return null; // too little explanation text to trust
+    const matches=entries.filter(([,v])=>{const c=compactAlnum(v);return c.length>=3&&compactExp.includes(c);});
+    if(matches.length!==1)return null; // ambiguous — 0 or 2+ codes found verbatim in explanation
+    const[bestKey]=matches[0];
+    if(normAnswerKey(bestKey)===ca)return null;
+    return{suggestedKey:bestKey,method:"Code match",evidence:`"${q.options[bestKey]}" appears in the explanation`};
+  }
+
+  return null; // mixed option types — too ambiguous to auto-check
+}
 function optionCoverage(explanationTokenSet,optionText){
   const optTokens=tokenize(optionText);
   if(!optTokens.length)return 0;
@@ -6852,6 +6934,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[auditResults,setAuditResults]=useState(null); // null=not run, [] = clean, [...] = mismatches
   const[auditError,setAuditError]=useState("");
   const[semanticResults,setSemanticResults]=useState(null); // null=not run, [] = none flagged, [...] = possible mismatches
+  const[semanticSkipped,setSemanticSkipped]=useState(0); // count of questions skipped as numeric/code-heavy (unreliable for word-overlap)
+  const[numericResults,setNumericResults]=useState(null); // null=not run, [...] = confident mismatches found via digit/code matching
   const isDesktop=useIsDesktop(900);
 
   const load=useCallback(async(isRefresh)=>{
@@ -6935,6 +7019,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
     try{
       const flagged=[];
       const semanticFlags=[];
+      const numericFlags=[];
+      let skippedNumeric=0;
       for(const colName of["questions","theoryQuestions"]){
         let snap;
         try{ snap=await getDocs(collection(db,colName)); }catch{ continue; } // collection may not exist
@@ -6962,7 +7048,29 @@ function FounderDashboardScreen({onBack,T,showToast}){
           // "Staff") and would never reach a 2+ raw-count threshold even on a
           // perfect match. Stemming handles singular/plural mismatches like
           // explanation "sandals" vs option "Sandal".
-          if(q.explanation&&q.explanation.trim().length>15){
+          const optionTexts=Object.values(q.options);
+          const numericLikeCount=optionTexts.filter(v=>looksNumericOrCode(v)).length;
+          if(numericLikeCount>=optionTexts.length*0.5){
+            // Numeric/code-heavy — word-overlap can't judge this, try the
+            // targeted numeric checker instead (digit comparison / substring
+            // code matching). Only falls through to "needs manual review"
+            // when even that can't resolve it cleanly.
+            const result=checkNumericMismatch(q,ca);
+            if(result){
+              numericFlags.push({
+                id:d.id,collection:colName,subject:q.subject||"",topic:q.topic||"",
+                question:(q.question||"").slice(0,100),
+                currentCorrect:q.correctAnswer,
+                currentCorrectText:q.options[Object.keys(q.options).find(k=>normAnswerKey(k)===ca)]||"",
+                suggestedCorrect:result.suggestedKey,
+                suggestedCorrectText:q.options[result.suggestedKey],
+                method:result.method,
+                evidence:result.evidence,
+              });
+            }else{
+              skippedNumeric++; // ambiguous even to the numeric checker — genuinely needs a human
+            }
+          }else if(q.explanation&&q.explanation.trim().length>15){
             const expTokens=new Set(tokenize(q.explanation));
             if(expTokens.size>=2){
               const scores=Object.entries(q.options).map(([k,v])=>({key:k,coverage:optionCoverage(expTokens,v)}));
@@ -6991,6 +7099,8 @@ function FounderDashboardScreen({onBack,T,showToast}){
       semanticFlags.sort((a,b)=>b.confidence-a.confidence);
       setAuditResults(flagged);
       setSemanticResults(semanticFlags);
+      setNumericResults(numericFlags);
+      setSemanticSkipped(skippedNumeric);
     }catch(e){setAuditError(e?.message||"Audit failed — check Firestore rules/connection.");}
     finally{setAuditing(false);}
   },[]);
@@ -8052,6 +8162,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}80`,marginBottom:14,lineHeight:1.7}}>
                       Catches cases where correctAnswer points to a real option letter — but the WRONG one.
                       This is a heuristic, not a guarantee. Review each one before editing Firestore.
+                      Numeric/currency/code-heavy questions (Accounting, Economics) are handled separately below.
                     </div>
                     {semanticResults.length===0?(
                       <div style={{textAlign:"center",padding:"20px 20px",fontFamily:"'DM Mono',monospace",fontSize:11,color:"#4ade80"}}>
@@ -8080,6 +8191,53 @@ function FounderDashboardScreen({onBack,T,showToast}){
                         {semanticResults.length>150&&(
                           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,textAlign:"center",padding:"12px 0"}}>
                             + {semanticResults.length-150} more not shown — fix the top ones first, then re-run.
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* ── NUMERIC ANSWER CHECKER — handles computed values + codes that word-overlap can't ── */}
+                {numericResults!==null&&!auditError&&(
+                  <div style={{marginTop:28}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:6}}>
+                      NUMERIC & CODE ANSWER CHECK · Accounting/Economics-style questions
+                    </div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}80`,marginBottom:14,lineHeight:1.7}}>
+                      Two techniques: extracts the final computed number from step-by-step workings and compares digits only
+                      (survives OCR corruption like "₦12,418"→"W12418") · checks whether a code like "IAS 2" appears verbatim
+                      in the explanation once spacing is stripped. Only flags exact, unambiguous matches — anything unclear is
+                      left for manual review, never guessed.
+                      {semanticSkipped>0&&<><br/><span style={{color:T.gold}}>{semanticSkipped} questions</span> couldn't be resolved automatically even with this — genuinely need manual review (mixed option types, messy explanations, or date-range answers).</>}
+                    </div>
+                    {numericResults.length===0?(
+                      <div style={{textAlign:"center",padding:"20px 20px",fontFamily:"'DM Mono',monospace",fontSize:11,color:"#4ade80"}}>
+                        ✓ No confident mismatches found in numeric/code questions.
+                      </div>
+                    ):(
+                      <>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#f97316",marginBottom:12,fontWeight:700}}>
+                          ⚠ {numericResults.length} confident mismatch{numericResults.length!==1?"es":""} found
+                        </div>
+                        {numericResults.slice(0,150).map((r,i)=>(
+                          <div key={i} style={{background:T.surface,border:"1px solid rgba(96,165,250,0.3)",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginBottom:4}}>{r.collection} / {r.id} · {r.subject} {r.topic?`· ${r.topic}`:""} · {r.method}</div>
+                            <div style={{fontSize:12,color:T.text,marginBottom:8,lineHeight:1.5}}>{r.question}{r.question.length>=100?"…":""}</div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:3}}>
+                              Currently marked correct: <strong>{r.currentCorrect}</strong> — "{r.currentCorrectText}"
+                            </div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4ade80",marginBottom:8}}>
+                              Suggested: <strong>{r.suggestedCorrect}</strong> — "{r.suggestedCorrectText}"
+                            </div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#60a5fa",fontStyle:"italic"}}>
+                              {r.evidence}
+                            </div>
+                          </div>
+                        ))}
+                        {numericResults.length>150&&(
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,textAlign:"center",padding:"12px 0"}}>
+                            + {numericResults.length-150} more not shown — fix the top ones first, then re-run.
                           </div>
                         )}
                       </>

@@ -7014,6 +7014,41 @@ function FounderDashboardScreen({onBack,T,showToast}){
 
   useEffect(()=>{load(false);},[load]);
 
+  // ── EXPORT FLAGGED QUESTIONS — CSV ready for review + bulk-fix script ─────────
+  const exportAuditCSV=()=>{
+    const rows=[];
+    (auditResults||[]).forEach(r=>rows.push({
+      type:"structural",collection:r.collection,docId:r.id,subject:r.subject,topic:r.topic,
+      question:r.question,currentCorrect:r.correctAnswer,currentCorrectText:"",
+      suggestedCorrect:"",suggestedCorrectText:"",confidenceOrMethod:"missing/invalid key",
+      evidence:`option keys: ${r.optionKeys}`,approved:"",
+    }));
+    (semanticResults||[]).forEach(r=>rows.push({
+      type:"semantic",collection:r.collection,docId:r.id,subject:r.subject,topic:r.topic,
+      question:r.question,currentCorrect:r.currentCorrect,currentCorrectText:r.currentCorrectText,
+      suggestedCorrect:r.suggestedCorrect,suggestedCorrectText:r.suggestedCorrectText,
+      confidenceOrMethod:`${r.confidence}%`,evidence:r.explanation,approved:"",
+    }));
+    (numericResults||[]).forEach(r=>rows.push({
+      type:"numeric",collection:r.collection,docId:r.id,subject:r.subject,topic:r.topic,
+      question:r.question,currentCorrect:r.currentCorrect,currentCorrectText:r.currentCorrectText,
+      suggestedCorrect:r.suggestedCorrect,suggestedCorrectText:r.suggestedCorrectText,
+      confidenceOrMethod:r.method,evidence:r.evidence,approved:"",
+    }));
+    if(!rows.length){show("Run the audit first — nothing to export yet.","error");return;}
+    const headers=["type","collection","docId","subject","topic","question","currentCorrect","currentCorrectText","suggestedCorrect","suggestedCorrectText","confidenceOrMethod","evidence","approved"];
+    const csv=[headers.join(",")].concat(
+      rows.map(r=>headers.map(h=>`"${String(r[h]??"").replace(/"/g,'""')}"`).join(","))
+    ).join("\n");
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=`crediq-audit-flagged-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    show(`Exported ${rows.length} flagged questions. Fill "approved" with yes for each row you've checked, then run the fix script.`,"success");
+  };
+
   const runAnswerAudit=useCallback(async()=>{
     setAuditing(true);setAuditError("");
     try{
@@ -8121,12 +8156,32 @@ function FounderDashboardScreen({onBack,T,showToast}){
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:16}}>
                   ANSWER-KEY AUDIT · checks structural validity + cross-references explanations to catch wrong-but-valid correctAnswer values
                 </div>
-                <button onClick={runAnswerAudit} disabled={auditing} className="btn-press" style={{
-                  width:"100%",padding:"14px 0",border:"none",borderRadius:10,
-                  background:T.gold,color:T.bg,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
-                  cursor:auditing?"not-allowed":"pointer",opacity:auditing?0.6:1,marginBottom:16}}>
-                  {auditing?"SCANNING…":"RUN AUDIT"}
-                </button>
+                <div style={{display:"flex",gap:8,marginBottom:16}}>
+                  <button onClick={runAnswerAudit} disabled={auditing} className="btn-press" style={{
+                    flex:1,padding:"14px 0",border:"none",borderRadius:10,
+                    background:T.gold,color:T.bg,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
+                    cursor:auditing?"not-allowed":"pointer",opacity:auditing?0.6:1}}>
+                    {auditing?"SCANNING…":"RUN AUDIT"}
+                  </button>
+                  {(auditResults||semanticResults||numericResults)&&(
+                    <button onClick={exportAuditCSV} className="btn-press" style={{
+                      flex:1,padding:"14px 0",border:`1px solid ${T.gold}`,borderRadius:10,
+                      background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                      ↓ EXPORT CSV
+                    </button>
+                  )}
+                </div>
+                {(auditResults||semanticResults||numericResults)&&(
+                  <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:10,padding:"12px 14px",marginBottom:16}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",fontWeight:700,marginBottom:6}}>HOW TO BULK-FIX</div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,lineHeight:1.8}}>
+                      1. Export CSV → open in Sheets/Excel<br/>
+                      2. Review each row, type <strong>yes</strong> in the "approved" column for ones you've verified<br/>
+                      3. Delete rows you don't want changed (or leave "approved" blank — same effect)<br/>
+                      4. Save as CSV, run the fix script (ask for it — <code>node applyAuditFixes.cjs your-file.csv</code>) — dry-run by default, add <code>--apply</code> to actually write to Firestore
+                    </div>
+                  </div>
+                )}
                 {auditError&&(
                   <div style={{background:"rgba(192,57,43,0.08)",border:"1px solid rgba(192,57,43,0.3)",borderRadius:10,padding:14,marginBottom:16}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.danger}}>{auditError}</div>

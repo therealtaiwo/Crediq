@@ -353,8 +353,8 @@ function labelWithCourse(subject,topic){
 
 const COURSE_GROUPS = {
   "Sciences":        { courses:["Medicine / Surgery","Pharmacy","Nursing","Engineering","Computer Science","Architecture"], subjects:["Physics","Chemistry","Biology","Mathematics","Agricultural Science","Geography","Economics"] },
-  "Humanities":      { courses:["Law","Mass Communication"], subjects:["Government","Literature in English","CRS","Geography","Economics","Agricultural Science","Biology","Mathematics","French","Yoruba","Igbo"] },
-  "Social Sciences": { courses:["Accounting","Economics"], subjects:["Economics","Accounting","Government","Business Studies","Geography","Literature in English","Mathematics","CRS","Agricultural Science"] },
+  "Humanities":      { courses:["Law","Mass Communication"], subjects:["Government","Literature in English","CRS","Islamic Religious Studies","Geography","Economics","Agricultural Science","Biology","Mathematics","French","Yoruba","Igbo"] },
+  "Social Sciences": { courses:["Accounting","Economics"], subjects:["Economics","Accounting","Government","Business Studies","Geography","Literature in English","Mathematics","CRS","Islamic Religious Studies","Agricultural Science"] },
   "Arts & Languages":{ courses:["Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education"], subjects:["History","French","Islamic Religious Studies","Music","Visual Arts","Yoruba","Igbo","Government","Literature in English","CRS","Economics"] },
 };
 const ALL_COURSES = ["Medicine / Surgery","Law","Engineering","Computer Science","Pharmacy","Architecture","Accounting","Economics","Mass Communication","Nursing","Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education","Other"];
@@ -5506,6 +5506,7 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
   const g=grade(pct),gc=gradeColor(g,T);
   const [showReview,setShowReview]=useState(false);
   const [showShareModal,setShowShareModal]=useState(false);
+  const [reportingQuestion,setReportingQuestion]=useState(null);
   // B.5 Part 4 — Results closes the conversation: only speaks about yesterday if
   // today's session genuinely touched that same topic. Never fabricate a connection.
   const loopClosing=(()=>{
@@ -5579,6 +5580,7 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
 
   return (
     <>
+      {reportingQuestion&&<ReportModal question={reportingQuestion} user={user} onClose={()=>setReportingQuestion(null)} T={T}/>}
       {showShareModal&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:300,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={()=>setShowShareModal(false)}>
           <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:380}}>
@@ -5914,9 +5916,17 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
           <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:12}}>
             {(questionResults||[]).map((r,i)=>(
               <div key={i} style={{background:r.correct?`${T.success}10`:`${T.danger}10`,border:`1px solid ${r.correct?T.success+"55":T.danger+"55"}`,borderRadius:10,padding:"14px 16px",borderLeft:`4px solid ${r.correct?T.success:T.danger}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>Q{i+1}{r.topic?` · ${r.topic}`:""}</span>
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,color:r.correct?T.success:T.danger}}>{r.correct?"✓ CORRECT":"✕ INCORRECT"}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,color:r.correct?T.success:T.danger}}>{r.correct?"✓ CORRECT":"✕ INCORRECT"}</span>
+                    <button className="btn-press" onClick={()=>setReportingQuestion({id:r.questionId,question:r.question,subject,topic:r.topic})}
+                      style={{display:"flex",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",color:T.muted}}
+                      title="Something wrong with this question?">
+                      <Flag size={10}/>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:"0.06em"}}>REPORT</span>
+                    </button>
+                  </div>
                 </div>
                 <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
                 {!r.correct&&(
@@ -5938,103 +5948,6 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
         </div>{/* max-width wrapper */}
       </div>
     </>
-  );
-}
-
-// ─── LEARN FROM MISTAKES — cross-session wrong-answer review, free for everyone ──
-// Read-only. No new writes, no schema changes, no timer/scoring changes.
-// Reuses the same review-card pattern already proven on ResultsScreen.
-function MistakesScreen({history,T,dark,setDark,onDrill,onBack}) {
-  const [subjectFilter,setSubjectFilter]=useState("All");
-
-  // Pull every wrong answer out of every past session's questionResults —
-  // this data already exists in Firestore from every completed session.
-  const allMistakes=useMemo(()=>{
-    const out=[];
-    (history||[]).forEach(session=>{
-      (session.questionResults||[]).forEach(q=>{
-        if(!q.correct){
-          out.push({...q,subject:session.subject,date:session.date});
-        }
-      });
-    });
-    // Most recent first
-    return out.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
-  },[history]);
-
-  const subjects=useMemo(()=>{
-    const s=new Set(allMistakes.map(m=>m.subject).filter(Boolean));
-    return ["All",...s];
-  },[allMistakes]);
-
-  const filtered=subjectFilter==="All"?allMistakes:allMistakes.filter(m=>m.subject===subjectFilter);
-
-  return (
-    <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
-      <div style={{background:T.navBg,padding:"20px 20px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
-        <div style={{maxWidth:1000,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <button onClick={onBack} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}>←</button>
-            <div>
-              <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:T.text}}>Learn From Mistakes</div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}70`,letterSpacing:"0.12em",marginTop:2}}>EVERY WRONG ANSWER, ONE PLACE</div>
-            </div>
-          </div>
-          <ThemeBtn dark={dark} setDark={setDark} T={T}/>
-        </div>
-      </div>
-
-      <div style={{padding:"18px",maxWidth:1000,margin:"0 auto",width:"100%"}}>
-        {allMistakes.length===0?(
-          <div style={{textAlign:"center",padding:"52px 24px"}}>
-            <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:T.text,marginBottom:10}}>Nothing here yet.</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.9}}>
-              Complete a practice session and anything<br/>you get wrong will show up here.
-            </div>
-          </div>
-        ):(
-          <>
-            {subjects.length>2&&(
-              <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:16,paddingBottom:4}}>
-                {subjects.map(s=>(
-                  <button key={s} onClick={()=>setSubjectFilter(s)}
-                    style={{flexShrink:0,padding:"7px 14px",borderRadius:20,border:`1px solid ${subjectFilter===s?T.gold:T.border}`,
-                      background:subjectFilter===s?`${T.gold}18`:"transparent",color:subjectFilter===s?T.gold:T.muted,
-                      fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",whiteSpace:"nowrap"}}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div style={{display:"flex",flexDirection:"column",gap:12}}>
-              {filtered.map((r,i)=>(
-                <div key={i} style={{background:`${T.danger}10`,border:`1px solid ${T.danger}55`,borderRadius:10,padding:"14px 16px",borderLeft:`4px solid ${T.danger}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{r.subject||"—"}{r.topic?` · ${r.topic}`:""}</span>
-                  </div>
-                  <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6,lineHeight:1.6}}>
-                    <div>You picked <strong>{r.userAnswer||"—"}</strong>{r.userAnswerText?` — "${r.userAnswerText}"`:""}</div>
-                    <div>Correct answer: <strong>{r.correctAnswer}</strong>{r.correctAnswerText?` — "${r.correctAnswerText}"`:""}</div>
-                  </div>
-                  {r.explanation&&(
-                    <div style={{background:`${T.gold}09`,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 12px",marginBottom:10}}>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold,letterSpacing:"0.1em",marginBottom:5}}>EXPLANATION</div>
-                      <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{r.explanation}</div>
-                    </div>
-                  )}
-                  <button className="btn-press" onClick={()=>onDrill&&onDrill()}
-                    style={{width:"100%",padding:"9px 0",border:`1px solid ${T.gold}40`,borderRadius:8,background:"transparent",
-                      color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em"}}>
-                    Practice Similar Questions →
-                  </button>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -6106,14 +6019,6 @@ function AnalyticsScreen({user,history,dark,setDark,T,onUpgrade,onNav}) {
           </div>
         ):(
           <>
-            {/* Learn From Mistakes — free entry point, deliberately placed above the premium gate below */}
-            <button className="btn-press" onClick={()=>onNav&&onNav("mistakes")}
-              style={{width:"100%",padding:"13px 16px",marginBottom:16,border:`1px solid ${T.gold}40`,borderRadius:10,
-                background:`${T.gold}0d`,color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,
-                cursor:"pointer",letterSpacing:"0.05em",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              📖 Learn From Mistakes →
-            </button>
-
             {/* Premium gate - show lock screen OR real content */}
             {!isPremium&&history.length>0?(
               <div style={{position:"relative",borderRadius:12,overflow:"hidden",marginBottom:16}}>
@@ -10537,7 +10442,6 @@ export default function App() {
           )}
 
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
-          {screen==="mistakes"&&user&&<MistakesScreen history={history} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}

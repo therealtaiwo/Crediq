@@ -550,6 +550,7 @@ const UNIVERSITIES_DATA=[
     "Nursing":{minPoints:12,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
   }},
   {name:"Federal University of Technology, Akure",shortName:"FUTA",tier:1,type:"Federal",location:"Akure, Ondo",state:"Ondo",acceptsJUPEB:true,searchAliases:["akure","ondo"],popularRank:11,courses:{
+    "Medicine / Surgery":{minPoints:16,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
     "Engineering":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
     "Computer Science":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
     "Architecture":{minPoints:12,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},

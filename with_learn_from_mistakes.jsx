@@ -353,8 +353,8 @@ function labelWithCourse(subject,topic){
 
 const COURSE_GROUPS = {
   "Sciences":        { courses:["Medicine / Surgery","Pharmacy","Nursing","Engineering","Computer Science","Architecture"], subjects:["Physics","Chemistry","Biology","Mathematics","Agricultural Science","Geography","Economics"] },
-  "Humanities":      { courses:["Law","Mass Communication"], subjects:["Government","Literature in English","CRS","Islamic Religious Studies","Geography","Economics","Agricultural Science","Biology","Mathematics","French","Yoruba","Igbo"] },
-  "Social Sciences": { courses:["Accounting","Economics"], subjects:["Economics","Accounting","Government","Business Studies","Geography","Literature in English","Mathematics","CRS","Islamic Religious Studies","Agricultural Science"] },
+  "Humanities":      { courses:["Law","Mass Communication"], subjects:["Government","Literature in English","CRS","Geography","Economics","Agricultural Science","Biology","Mathematics","French","Yoruba","Igbo"] },
+  "Social Sciences": { courses:["Accounting","Economics"], subjects:["Economics","Accounting","Government","Business Studies","Geography","Literature in English","Mathematics","CRS","Agricultural Science"] },
   "Arts & Languages":{ courses:["Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education"], subjects:["History","French","Islamic Religious Studies","Music","Visual Arts","Yoruba","Igbo","Government","Literature in English","CRS","Economics"] },
 };
 const ALL_COURSES = ["Medicine / Surgery","Law","Engineering","Computer Science","Pharmacy","Architecture","Accounting","Economics","Mass Communication","Nursing","Theatre Arts","Education","Linguistics","Islamic Studies","Fine Arts","Music Education","Other"];
@@ -550,7 +550,6 @@ const UNIVERSITIES_DATA=[
     "Nursing":{minPoints:12,label:"Moderate",combination:["Biology","Chemistry","Physics"]},
   }},
   {name:"Federal University of Technology, Akure",shortName:"FUTA",tier:1,type:"Federal",location:"Akure, Ondo",state:"Ondo",acceptsJUPEB:true,searchAliases:["akure","ondo"],popularRank:11,courses:{
-    "Medicine / Surgery":{minPoints:16,label:"Very Competitive",combination:["Biology","Chemistry","Physics"]},
     "Engineering":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
     "Computer Science":{minPoints:13,label:"Competitive",combination:["Mathematics","Physics","Chemistry"]},
     "Architecture":{minPoints:12,label:"Moderate",combination:["Mathematics","Physics","Chemistry"]},
@@ -5507,7 +5506,6 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
   const g=grade(pct),gc=gradeColor(g,T);
   const [showReview,setShowReview]=useState(false);
   const [showShareModal,setShowShareModal]=useState(false);
-  const [reportingQuestion,setReportingQuestion]=useState(null);
   // B.5 Part 4 — Results closes the conversation: only speaks about yesterday if
   // today's session genuinely touched that same topic. Never fabricate a connection.
   const loopClosing=(()=>{
@@ -5581,7 +5579,6 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
 
   return (
     <>
-      {reportingQuestion&&<ReportModal question={reportingQuestion} user={user} onClose={()=>setReportingQuestion(null)} T={T}/>}
       {showShareModal&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:300,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={()=>setShowShareModal(false)}>
           <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:380}}>
@@ -5917,17 +5914,9 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
           <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:12}}>
             {(questionResults||[]).map((r,i)=>(
               <div key={i} style={{background:r.correct?`${T.success}10`:`${T.danger}10`,border:`1px solid ${r.correct?T.success+"55":T.danger+"55"}`,borderRadius:10,padding:"14px 16px",borderLeft:`4px solid ${r.correct?T.success:T.danger}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>Q{i+1}{r.topic?` · ${r.topic}`:""}</span>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,color:r.correct?T.success:T.danger}}>{r.correct?"✓ CORRECT":"✕ INCORRECT"}</span>
-                    <button className="btn-press" onClick={()=>setReportingQuestion({id:r.questionId,question:r.question,subject,topic:r.topic})}
-                      style={{display:"flex",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",color:T.muted}}
-                      title="Something wrong with this question?">
-                      <Flag size={10}/>
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:"0.06em"}}>REPORT</span>
-                    </button>
-                  </div>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,color:r.correct?T.success:T.danger}}>{r.correct?"✓ CORRECT":"✕ INCORRECT"}</span>
                 </div>
                 <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
                 {!r.correct&&(
@@ -5955,9 +5944,8 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
 // ─── LEARN FROM MISTAKES — cross-session wrong-answer review, free for everyone ──
 // Read-only. No new writes, no schema changes, no timer/scoring changes.
 // Reuses the same review-card pattern already proven on ResultsScreen.
-function MistakesScreen({history,user,T,dark,setDark,onDrill,onBack}) {
+function MistakesScreen({history,T,dark,setDark,onDrill,onBack}) {
   const [subjectFilter,setSubjectFilter]=useState("All");
-  const [reportingQuestion,setReportingQuestion]=useState(null);
 
   // Pull every wrong answer out of every past session's questionResults —
   // this data already exists in Firestore from every completed session.
@@ -5983,7 +5971,6 @@ function MistakesScreen({history,user,T,dark,setDark,onDrill,onBack}) {
 
   return (
     <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
-      {reportingQuestion&&<ReportModal question={reportingQuestion} user={user} onClose={()=>setReportingQuestion(null)} T={T}/>}
       <div style={{background:T.navBg,padding:"20px 20px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
         <div style={{maxWidth:1000,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -6022,14 +6009,8 @@ function MistakesScreen({history,user,T,dark,setDark,onDrill,onBack}) {
             <div style={{display:"flex",flexDirection:"column",gap:12}}>
               {filtered.map((r,i)=>(
                 <div key={i} style={{background:`${T.danger}10`,border:`1px solid ${T.danger}55`,borderRadius:10,padding:"14px 16px",borderLeft:`4px solid ${T.danger}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                     <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{r.subject||"—"}{r.topic?` · ${r.topic}`:""}</span>
-                    <button className="btn-press" onClick={()=>setReportingQuestion({id:r.questionId,question:r.question,subject:r.subject,topic:r.topic})}
-                      style={{display:"flex",alignItems:"center",gap:3,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",color:T.muted}}
-                      title="Something wrong with this question?">
-                      <Flag size={10}/>
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:"0.06em"}}>REPORT</span>
-                    </button>
                   </div>
                   <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6,lineHeight:1.6}}>
@@ -10556,7 +10537,7 @@ export default function App() {
           )}
 
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
-          {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
+          {screen==="mistakes"&&user&&<MistakesScreen history={history} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}

@@ -10,7 +10,8 @@ import {
 import { auth, db, track } from "./firebase";
 import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification,
-  signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult
+  signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+  sendPasswordResetEmail
 } from "firebase/auth";
 import {
   doc, getDoc, setDoc, updateDoc, addDoc,
@@ -2740,6 +2741,8 @@ function AuthScreen({onAuth,dark,setDark,T}) {
   const [pendingVerify,setPendingVerify]=useState(null);
   const [verifying,setVerifying]=useState(false);
   const [resent,setResent]=useState(false);
+  const [resetSent,setResetSent]=useState(false);
+  const [resetLoading,setResetLoading]=useState(false);
 
   const getInline=f=>{
     if(!touched[f])return null;
@@ -2843,6 +2846,26 @@ function AuthScreen({onAuth,dark,setDark,T}) {
     finally{setLoading(false);}
   };
 
+  const handleForgotPassword=async()=>{
+    setErr("");
+    if(!email.trim()||!email.includes("@")){
+      setTouched(t=>({...t,email:true}));
+      shake("Enter your email above, then tap 'Forgot password?' again.");
+      return;
+    }
+    setResetLoading(true);
+    try{
+      await sendPasswordResetEmail(auth,email.trim());
+      track("password_reset_requested",{email:email.trim()});
+    }catch(e){
+      // Don't reveal whether the account exists (auth/user-not-found) — only
+      // surface genuine input errors like a malformed email.
+      if(e.code==="auth/invalid-email"){setResetLoading(false);shake("Enter a valid email.");return;}
+    }
+    setResetSent(true);
+    setResetLoading(false);
+  };
+
   const handleCheckVerified=async()=>{
     setVerifying(true);setErr("");
     try{
@@ -2926,7 +2949,7 @@ function AuthScreen({onAuth,dark,setDark,T}) {
           </div>
           <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:8,padding:3,marginBottom:20,gap:3}}>
             {["login","signup"].map(m=>(
-              <button key={m} className="btn-press" onClick={()=>{setMode(m);setErr("");setTouched({});}} style={{flex:1,padding:"9px 0",border:"none",borderRadius:6,background:mode===m?"#1B3A2A":"transparent",color:mode===m?"#F7F3EC":"rgba(247,243,236,0.4)",fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer",letterSpacing:"0.1em"}}>
+              <button key={m} className="btn-press" onClick={()=>{setMode(m);setErr("");setTouched({});setResetSent(false);}} style={{flex:1,padding:"9px 0",border:"none",borderRadius:6,background:mode===m?"#1B3A2A":"transparent",color:mode===m?"#F7F3EC":"rgba(247,243,236,0.4)",fontFamily:"'DM Mono',monospace",fontSize:10,cursor:"pointer",letterSpacing:"0.1em"}}>
                 {m==="login"?"LOG IN":"SIGN UP"}
               </button>
             ))}
@@ -2976,6 +2999,23 @@ function AuthScreen({onAuth,dark,setDark,T}) {
                 </button>
               </div>
               {getInline("pw")&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#C0392B",marginTop:5}}>{getInline("pw")}</div>}
+              {mode==="login"&&!resetSent&&(
+                <div style={{textAlign:"right",marginTop:8}}>
+                  <button type="button" onClick={handleForgotPassword} disabled={resetLoading} style={{background:"none",border:"none",cursor:resetLoading?"not-allowed":"pointer",color:"rgba(184,151,62,0.6)",fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:"0.04em",textDecoration:"underline",padding:0}}>
+                    {resetLoading?"Sending…":"Forgot password?"}
+                  </button>
+                </div>
+              )}
+              {mode==="login"&&resetSent&&(
+                <div style={{marginTop:10,background:"rgba(184,151,62,0.08)",border:"1px solid rgba(184,151,62,0.25)",borderRadius:8,padding:"10px 14px"}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#F7F3EC",lineHeight:1.5}}>
+                    If an account exists for that email, a reset link is on its way. Check your inbox (and spam folder).
+                  </div>
+                  <button type="button" onClick={()=>setResetSent(false)} style={{marginTop:6,background:"none",border:"none",cursor:"pointer",color:"rgba(184,151,62,0.6)",fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:"0.06em",padding:0}}>
+                    ← BACK
+                  </button>
+                </div>
+              )}
             </div>
             {err&&<div style={{background:"rgba(192,57,43,0.12)",border:"1px solid rgba(192,57,43,0.3)",borderRadius:8,padding:"10px 14px",fontFamily:"'DM Mono',monospace",fontSize:10,color:"#C0392B"}}>{err}</div>}
             <BtnPrimary onClick={handleSubmit} loading={loading} T={T}>{mode==="login"?"Enter CrediQ":"Check My Readiness"}</BtnPrimary>

@@ -5268,6 +5268,98 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
 }
 
 // ─── DRILL SCREEN ─────────────────────────────────────────────────────────────
+// ─── AI TUTOR ─────────────────────────────────────────────────────────────────
+const AI_TUTOR_DAILY_CAP=60;
+// "Genetics" is the only topic tag that could contain cross/probability-style
+// questions (confirmed against the real topic list) — Llama 3.1 8B was tested
+// and found unreliable specifically on that question type. Whole topic
+// excluded until questions are tagged more granularly.
+const AI_TUTOR_EXCLUDED_TOPICS=["Genetics"];
+const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
+
+async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
+  if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return{blocked:"excluded-topic"};
+  if(!user?.isPremium)return{blocked:"not-premium"};
+
+  const qRef=doc(db,"questions",questionId);
+  const qSnap=await getDoc(qRef);
+  const cached=qSnap.data()?.aiTutorExplanation;
+  if(cached)return{text:cached,cached:true};
+
+  const counterRef=doc(db,"aiTutorCounters",aiTutorTodayKey());
+  const counterSnap=await getDoc(counterRef);
+  const count=counterSnap.exists()?(counterSnap.data().count||0):0;
+  if(count>=AI_TUTOR_DAILY_CAP)return{blocked:"daily-cap-reached"};
+
+  let res;
+  try{
+    const token=await auth.currentUser.getIdToken();
+    res=await fetch("/api/ai-tutor",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+      body:JSON.stringify({
+        subject:question.subject,topic:question.topic,question:question.question,
+        options:question.options,correctAnswer:question.correctAnswer,studentAnswer
+      })
+    });
+  }catch(err){return{blocked:"network-error"};}
+
+  if(res.status===429)return{blocked:"rate-limited"};
+  if(!res.ok)return{blocked:"generation-failed"};
+
+  const data=await res.json();
+  if(!data.text)return{blocked:"generation-failed"};
+
+  try{
+    await updateDoc(qRef,{aiTutorExplanation:data.text,aiTutorGeneratedAt:new Date().toISOString()});
+    await setDoc(counterRef,{count:increment(1)},{merge:true});
+  }catch(err){console.error("Failed to cache AI Tutor result:",err);}
+
+  return{text:data.text,cached:false};
+}
+
+function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
+  const[state,setState]=useState("idle");
+  const[explanation,setExplanation]=useState(null);
+  const[blockedReason,setBlockedReason]=useState(null);
+
+  if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return null;
+
+  const handleTap=async()=>{
+    if(!user?.isPremium){onUpgrade&&onUpgrade();return;}
+    setState("loading");
+    const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
+    if(result.text){setExplanation(result.text);setState("shown");}
+    else{setBlockedReason(result.blocked);setState("blocked");}
+  };
+
+  if(state==="shown"){
+    return(
+      <div style={{marginTop:12,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.gold}33`}}>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",marginBottom:6,color:T.gold}}>AI TUTOR</div>
+        <div style={{whiteSpace:"pre-wrap",lineHeight:1.55,fontSize:13,color:T.text}}>{explanation}</div>
+      </div>
+    );
+  }
+
+  if(state==="blocked"){
+    const message=(blockedReason==="daily-cap-reached"||blockedReason==="rate-limited")
+      ?"Our AI Tutor is currently helping other students. The explanation above still applies — try again in a little while."
+      :"AI Tutor couldn't generate an explanation right now — the explanation above still applies.";
+    return <div style={{marginTop:12,fontSize:11,color:T.muted,fontStyle:"italic"}}>{message}</div>;
+  }
+
+  return(
+    <button onClick={handleTap} disabled={state==="loading"} className="btn-press"
+      style={{marginTop:12,width:"100%",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${T.gold}`,
+        background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
+        letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
+      {state==="loading"?"Thinking…":user?.isPremium?"Help me understand this better":"✨ Sometimes one explanation isn't enough — unlock AI Tutor"}
+    </button>
+  );
+}
+
+// ─── DRILL SCREEN ─────────────────────────────────────────────────────────────
 function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUpgrade}) {
   const weakTopics=useMemo(()=>calcWeakTopics(history),[history]);
   const userSubjects=user.subjects||[];
@@ -5531,6 +5623,143 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
               </div>
             )}
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── TUTOR SCREEN — learn while answering, immediate per-question reveal ──────
+function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
+  const userSubjects=user.subjects||[];
+  const[selSub,setSelSub]=useState(userSubjects[0]||"");
+  const[session,setSession]=useState(null); // array of questions once started
+  const[idx,setIdx]=useState(0);
+  const[selectedOpt,setSelectedOpt]=useState(null);
+  const[revealed,setRevealed]=useState(false);
+  const qbLoaded=Object.keys(QB).length>0;
+
+  const startSession=()=>{
+    const all=getAllQuestionsForSubject(QB,selSub);
+    if(!all||all.length===0)return;
+    const shuffled=[...all].sort(()=>Math.random()-0.5).slice(0,10);
+    setSession(shuffled);setIdx(0);setSelectedOpt(null);setRevealed(false);
+  };
+
+  const pickOption=letter=>{
+    if(revealed)return;
+    setSelectedOpt(letter);setRevealed(true);
+  };
+
+  const next=()=>{
+    if(idx+1>=session.length){setSession(null);return;}
+    setIdx(idx+1);setSelectedOpt(null);setRevealed(false);
+  };
+
+  // ── Subject picker (before a session starts) ──
+  if(!session){
+    return(
+      <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
+        <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
+              <div style={{width:1,height:14,background:"rgba(255,255,255,0.1)"}}/>
+              <Logo size={17} onDark={true}/>
+            </div>
+            <ThemeBtn dark={dark} setDark={setDark} T={T}/>
+          </div>
+          <div style={{marginTop:14}}>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>AI Tutor</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",letterSpacing:"0.08em",marginTop:3}}>Learn as you answer — no timer, no pressure</div>
+          </div>
+        </div>
+
+        {!qbLoaded&&(
+          <div style={{background:"rgba(249,115,22,0.1)",borderBottom:"1px solid rgba(249,115,22,0.25)",padding:"10px 18px",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#f97316",letterSpacing:"0.08em"}}>Loading question bank — try again in a moment</span>
+          </div>
+        )}
+
+        <div style={{padding:18,maxWidth:1000,margin:"0 auto",width:"100%"}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>SELECT SUBJECT</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+            {userSubjects.map(sub=>{
+              const meta=SUBJECT_META[sub]||{icon:"BKS",color:"#B8973E"};
+              const active=sub===selSub;
+              return(
+                <button key={sub} className="btn-press" onClick={()=>setSelSub(sub)} style={{padding:"8px 14px",border:`1px solid ${active?meta.color:T.border}`,borderRadius:8,background:active?`${meta.color}15`:T.surface,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                  <SubjectBadge code={meta.icon} color={meta.color} size={16}/>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:active?meta.color:T.muted,fontWeight:active?700:400}}>{sub}</span>
+                </button>
+              );
+            })}
+          </div>
+          {selSub&&(
+            <BtnPrimary onClick={startSession} T={T}>
+              Start with {SUBJECT_META[selSub]?.icon||selSub} — 10 Questions →
+            </BtnPrimary>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Active session — one question at a time, immediate reveal ──
+  const q=session[idx];
+  const optionEntries=Object.entries(q.options||{});
+  const isCorrect=selectedOpt===q.correctAnswer;
+
+  return(
+    <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
+      <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button className="btn-press" onClick={()=>setSession(null)} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Exit</button>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.5)"}}>{idx+1} / {session.length}</span>
+        </div>
+      </div>
+
+      <div style={{padding:18,maxWidth:700,margin:"0 auto",width:"100%"}}>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:8}}>{q.topic?.toUpperCase()}</div>
+        <div style={{fontSize:16,lineHeight:1.5,marginBottom:20,color:T.text}}>{q.question}</div>
+
+        {optionEntries.map(([letter,text])=>{
+          const isSel=selectedOpt===letter;
+          const isRight=letter===q.correctAnswer;
+          let border=T.border,bg=T.surface;
+          if(revealed&&isRight){border="#4ade80";bg="rgba(74,222,128,0.08)";}
+          else if(revealed&&isSel&&!isRight){border="#C0392B";bg="rgba(192,57,43,0.08)";}
+          else if(isSel){border=T.gold;bg=`${T.gold}15`;}
+          return(
+            <button key={letter} onClick={()=>pickOption(letter)} disabled={revealed} className="btn-press"
+              style={{width:"100%",padding:"14px 16px",border:`1.5px solid ${border}`,borderRadius:10,background:bg,
+                cursor:revealed?"default":"pointer",textAlign:"left",display:"flex",gap:12,alignItems:"flex-start",
+                marginBottom:8}}>
+              <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:T.gold}}>{letter}.</span>
+              <span style={{color:T.text,fontSize:14}}>{text}</span>
+            </button>
+          );
+        })}
+
+        {revealed&&(
+          <div className="fi1" style={{marginTop:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              {isCorrect
+                ?<><CheckCircle size={16} color="#4ade80"/><span style={{color:"#4ade80",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>CORRECT</span></>
+                :<><AlertCircle size={16} color="#C0392B"/><span style={{color:"#C0392B",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>NOT QUITE</span></>}
+            </div>
+            {q.explanation&&(
+              <div style={{padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.55,color:T.text}}>
+                {q.explanation}
+              </div>
+            )}
+
+            <AiTutorButton user={user} question={q} questionId={q.id} studentAnswer={selectedOpt} onUpgrade={onUpgrade} T={T}/>
+
+            <BtnPrimary onClick={next} T={T}>
+              {idx+1>=session.length?"Finish Session":"Next Question →"}
+            </BtnPrimary>
+          </div>
         )}
       </div>
     </div>
@@ -9627,6 +9856,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
+            {icon:<MessageCircle size={18} color={T.gold}/>,label:"AI Tutor",sub:"Learn while you answer — immediate explanations",action:()=>onNav("tutor"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
               :ambAppStatus==="pending"
@@ -10534,7 +10764,7 @@ export default function App() {
     if(s==="drill"&&!user?.isPremium){setShowPremiumGate(true);return;}
     if(s==="editprofile"){setScreen("editprofile");return;}
     // Lazy load questions when Practice or Drill is tapped
-    if((s==="setup"||s==="drill")&&!Object.keys(QB).length&&user?.subjects){
+    if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){
       loadQuestions(user.subjects);
     }
     setScreen(s);
@@ -10599,6 +10829,7 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

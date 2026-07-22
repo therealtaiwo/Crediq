@@ -16,7 +16,7 @@ if (!getApps().length) {
 }
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.1-8b-instant"; // confirmed reliable on Accounting, Physics,
+const MODEL = "llama-3.3-70b-versatile"; // confirmed reliable on Accounting, Physics,
 // Chemistry, most Biology, Maths, Government, Economics — NOT reliable on
 // Genetics cross/probability questions. Client excludes topic === "Genetics"
 // entirely before ever calling this function.

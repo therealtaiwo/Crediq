@@ -333,18 +333,18 @@ function findTopicCourse(topic){
 // Filter question bank to a specific course unit.
 // If fewer than 10 questions match (keyword gap), pads with orphan questions
 // (unclassified topics) from the same subject so drills never run dry.
-// Filter question bank to a specific course unit.
-// Returns ONLY questions whose topic genuinely matched this course — no
-// cross-course padding. A course with few classified questions will simply
-// return fewer questions rather than silently mixing in other courses' content.
 function getQuestionsForCourse(QB,subject,courseCode){
   const all=getAllQuestionsForSubject(QB,subject);
-  const matched=[];
+  const matched=[];const orphans=[];
   for(const q of all){
     const code=getQuestionCourse(subject,q.topic);
     if(code===courseCode)matched.push(q);
+    else if(!code)orphans.push(q); // topic didn't match ANY unit — collect as fallback
   }
-  return matched;
+  if(matched.length>=10)return matched;
+  // Below floor: shuffle orphans and pad up to 20 so the unit is always drillable
+  const shuffled=[...orphans].sort(()=>Math.random()-0.5);
+  return[...matched,...shuffled.slice(0,Math.max(0,20-matched.length))];
 }
 // Add course code label to a topic string
 function labelWithCourse(subject,topic){
@@ -5319,6 +5319,43 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
   return{text:data.text,cached:false};
 }
 
+// Lightweight renderer for AI Tutor output — handles **bold** headers and
+// inline **bold**, real paragraph spacing. No markdown library dependency;
+// just enough to stop raw ** characters from showing to students.
+function renderInlineBold(line,T){
+  const parts=line.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part,i)=>{
+    if(part.startsWith("**")&&part.endsWith("**")){
+      return <strong key={i} style={{color:T.text,fontWeight:700}}>{part.slice(2,-2)}</strong>;
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
+function AiTutorFormattedText({text,T}){
+  const lines=text.split("\n").filter(l=>l.trim().length>0);
+  return(
+    <div style={{fontSize:13,color:T.text}}>
+      {lines.map((line,i)=>{
+        const trimmed=line.trim();
+        const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
+        if(isHeader){
+          return(
+            <div key={i} style={{marginTop:i===0?0:14,marginBottom:4,fontWeight:700,color:T.gold,fontSize:12,letterSpacing:"0.02em"}}>
+              {trimmed.slice(2,-2)}
+            </div>
+          );
+        }
+        return(
+          <div key={i} style={{lineHeight:1.55,marginBottom:4}}>
+            {renderInlineBold(line,T)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[state,setState]=useState("idle");
   const[explanation,setExplanation]=useState(null);
@@ -5337,8 +5374,8 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   if(state==="shown"){
     return(
       <div style={{marginTop:12,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.gold}33`}}>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",marginBottom:6,color:T.gold}}>AI TUTOR</div>
-        <div style={{whiteSpace:"pre-wrap",lineHeight:1.55,fontSize:13,color:T.text}}>{explanation}</div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",marginBottom:10,color:T.gold}}>AI TUTOR</div>
+        <AiTutorFormattedText text={explanation} T={T}/>
       </div>
     );
   }
@@ -5589,16 +5626,12 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
               </div>
             )}
 
-            {selCourse&&(()=>{
-              const qs=getQuestionsForCourse(QB,selSub,selCourse);
-              const n=Math.min(10,qs.length);
-              if(qs.length===0){
-                return <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,textAlign:"center",padding:"14px 0"}}>No classified questions in this unit yet — check back soon.</div>;
-              }
-              return (
-                <BtnPrimary onClick={()=>{startDrill(qs,selCourse,selSub);}} T={T}>Drill {selCourse} — {n} Question{n!==1?"s":""}</BtnPrimary>
-              );
-            })()}
+            {selCourse&&(
+              <BtnPrimary onClick={()=>{
+                const qs=getQuestionsForCourse(QB,selSub,selCourse);
+                startDrill(qs,selCourse,selSub);
+              }} T={T}>Drill {selCourse} — 10 Questions</BtnPrimary>
+            )}
           </>
         )}
 
@@ -5712,7 +5745,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
 
   // ── Active session — one question at a time, immediate reveal ──
   const q=session[idx];
-  const optionEntries=Object.entries(q.options||{});
+  const optionEntries=Object.entries(q.options||{}).sort(([a],[b])=>a.localeCompare(b));
   const isCorrect=selectedOpt===q.correctAnswer;
 
   return(

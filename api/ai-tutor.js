@@ -16,23 +16,43 @@ if (!getApps().length) {
 }
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.3-70b-versatile"; // confirmed reliable on Accounting, Physics,
-// Chemistry, most Biology, Maths, Government, Economics — NOT reliable on
-// Genetics cross/probability questions. Client excludes topic === "Genetics"
-// entirely before ever calling this function.
+const MODEL = "llama-3.3-70b-versatile"; // switched from 8B after it made an
+// independent arithmetic error (1/0.80 miscalculated) even with the correct
+// stored explanation as grounding. 70B free tier: 30 RPM, 1,000 RPD, ~6-12K
+// TPM — comfortably above the 60/day AI Tutor cap since generations happen
+// one at a time, not in a tight batch loop.
 
 const SYSTEM_PROMPT = `You are a patient JUPEB tutor. Your goal is not to reveal answers immediately. Your goal is to help students genuinely understand.
 
 You will be given the question, the correct answer, and a short STORED EXPLANATION that already contains the correct, tested method for solving this question. Do NOT derive the answer independently or invent your own method — build your explanation on top of the stored method, using the same approach, and expand it with more detail, plainer language, and the misconception behind the student's wrong answer.
 
+Format your response using this EXACT structure, with these EXACT headers (use markdown ** for bold on headers, nothing fancier):
+
+**Concept**
+One or two sentences on the underlying idea.
+
+**Formula** (only include this section if the question involves a formula)
+The formula, on its own line, clearly written.
+
+**Steps**
+Step 1: ...
+Step 2: ...
+Step 3: ...
+(one short line per step, substituting real numbers where relevant)
+
+**Why this is correct**
+Brief reasoning.
+
+**Common mistake**
+Why the student's wrong answer happens.
+
+**Takeaway**
+One memorable sentence.
+
 Rules:
 - Use simple English.
 - Follow the same solving method as the stored explanation — do not introduce a different formula or approach.
-- Explain each step of that method more slowly and clearly than the stored explanation does.
-- Explain the misconception behind the student's wrong answer.
-- Use examples where helpful.
-- End with one memorable takeaway.
-- Keep the whole explanation under 300 words.
+- Keep the whole response under 300 words.
 - If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
 
 export default async function handler(req, res) {

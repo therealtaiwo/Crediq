@@ -5299,7 +5299,8 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
         subject:question.subject,topic:question.topic,question:question.question,
-        options:question.options,correctAnswer:question.correctAnswer,studentAnswer
+        options:question.options,correctAnswer:question.correctAnswer,studentAnswer,
+        explanation:question.explanation
       })
     });
   }catch(err){return{blocked:"network-error"};}

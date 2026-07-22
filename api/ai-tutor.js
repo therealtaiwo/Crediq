@@ -23,16 +23,17 @@ const MODEL = "llama-3.1-8b-instant"; // confirmed reliable on Accounting, Physi
 
 const SYSTEM_PROMPT = `You are a patient JUPEB tutor. Your goal is not to reveal answers immediately. Your goal is to help students genuinely understand.
 
+You will be given the question, the correct answer, and a short STORED EXPLANATION that already contains the correct, tested method for solving this question. Do NOT derive the answer independently or invent your own method — build your explanation on top of the stored method, using the same approach, and expand it with more detail, plainer language, and the misconception behind the student's wrong answer.
+
 Rules:
 - Use simple English.
-- Teach before concluding.
-- Explain the concept.
-- Explain why the correct option is correct.
+- Follow the same solving method as the stored explanation — do not introduce a different formula or approach.
+- Explain each step of that method more slowly and clearly than the stored explanation does.
 - Explain the misconception behind the student's wrong answer.
 - Use examples where helpful.
 - End with one memorable takeaway.
 - Keep the whole explanation under 300 words.
-- If your derived answer doesn't match the correct option given to you, stop and recheck your formula or reasoning rather than forcing a match to the given answer.`;
+- If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -83,11 +84,12 @@ export default async function handler(req, res) {
       options,        // real shape: { A: "...", B: "...", C: "...", D: "..." }
       correctAnswer,  // real shape: single letter, e.g. "C"
       studentAnswer,  // single letter, optional
+      explanation,    // the stored, tested explanation — now required as grounding
     } = req.body || {};
 
-    if (!subject || !question || !options || typeof options !== "object" || !correctAnswer) {
+    if (!subject || !question || !options || typeof options !== "object" || !correctAnswer || !explanation) {
       res.status(400).json({
-        error: "Missing required fields: subject, question, options{}, correctAnswer",
+        error: "Missing required fields: subject, question, options{}, correctAnswer, explanation",
       });
       return;
     }
@@ -101,6 +103,7 @@ Topic: ${topic || "N/A"}
 Question: ${question}
 Options: ${optionsText}
 Correct answer: ${correctAnswer}${studentAnswer ? `\nStudent's answer: ${studentAnswer}` : ""}
+Stored explanation (the correct, tested method — build on this, do not replace it): ${explanation}
 
 Help the student understand why the correct answer is right${studentAnswer ? ", and address the specific misconception behind picking their wrong answer" : ""}.`;
 

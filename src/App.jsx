@@ -333,18 +333,18 @@ function findTopicCourse(topic){
 // Filter question bank to a specific course unit.
 // If fewer than 10 questions match (keyword gap), pads with orphan questions
 // (unclassified topics) from the same subject so drills never run dry.
+// Filter question bank to a specific course unit.
+// Returns ONLY questions whose topic genuinely matched this course — no
+// cross-course padding. A course with few classified questions will simply
+// return fewer questions rather than silently mixing in other courses' content.
 function getQuestionsForCourse(QB,subject,courseCode){
   const all=getAllQuestionsForSubject(QB,subject);
-  const matched=[];const orphans=[];
+  const matched=[];
   for(const q of all){
     const code=getQuestionCourse(subject,q.topic);
     if(code===courseCode)matched.push(q);
-    else if(!code)orphans.push(q); // topic didn't match ANY unit — collect as fallback
   }
-  if(matched.length>=10)return matched;
-  // Below floor: shuffle orphans and pad up to 20 so the unit is always drillable
-  const shuffled=[...orphans].sort(()=>Math.random()-0.5);
-  return[...matched,...shuffled.slice(0,Math.max(0,20-matched.length))];
+  return matched;
 }
 // Add course code label to a topic string
 function labelWithCourse(subject,topic){
@@ -5589,12 +5589,16 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
               </div>
             )}
 
-            {selCourse&&(
-              <BtnPrimary onClick={()=>{
-                const qs=getQuestionsForCourse(QB,selSub,selCourse);
-                startDrill(qs,selCourse,selSub);
-              }} T={T}>Drill {selCourse} — 10 Questions</BtnPrimary>
-            )}
+            {selCourse&&(()=>{
+              const qs=getQuestionsForCourse(QB,selSub,selCourse);
+              const n=Math.min(10,qs.length);
+              if(qs.length===0){
+                return <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,textAlign:"center",padding:"14px 0"}}>No classified questions in this unit yet — check back soon.</div>;
+              }
+              return (
+                <BtnPrimary onClick={()=>{startDrill(qs,selCourse,selSub);}} T={T}>Drill {selCourse} — {n} Question{n!==1?"s":""}</BtnPrimary>
+              );
+            })()}
           </>
         )}
 

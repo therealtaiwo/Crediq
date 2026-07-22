@@ -31,7 +31,8 @@ Rules:
 - Explain the misconception behind the student's wrong answer.
 - Use examples where helpful.
 - End with one memorable takeaway.
-- Keep the whole explanation under 300 words.`;
+- Keep the whole explanation under 300 words.
+- If your derived answer doesn't match the correct option given to you, stop and recheck your formula or reasoning rather than forcing a match to the given answer.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {

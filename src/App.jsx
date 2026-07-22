@@ -9856,7 +9856,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
-            {icon:<MessageCircle size={18} color={T.gold}/>,label:"AI Tutor",sub:"Learn while you answer — immediate explanations",action:()=>onNav("tutor"),accent:T.gold},
+            ...(isFounder(user)?[{icon:<MessageCircle size={18} color={T.gold}/>,label:"AI Tutor (Test)",sub:"Founder-only while in test phase",action:()=>onNav("tutor"),accent:T.gold}]:[]),
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
               :ambAppStatus==="pending"
@@ -10829,7 +10829,7 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
-          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="tutor"&&user&&isFounder(user)&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

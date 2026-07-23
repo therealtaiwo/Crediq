@@ -5330,7 +5330,8 @@ const AI_TUTOR_SECTION_STYLE={
   "Steps":{icon:"🪜",color:"#58D68D"},
   "Why this is correct":{icon:"✅",color:"#58D68D"},
   "Common mistake":{icon:"⚠️",color:"#E67E22"},
-  "Takeaway":{icon:"🎯",color:"#BB8FCE"},
+  "Remember":{icon:"⭐",color:"#BB8FCE"},
+  "Try this yourself":{icon:"✏️",color:"#5DADE2"},
 };
 
 function renderInlineBold(line,T){

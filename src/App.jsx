@@ -5,7 +5,7 @@ import {
   ChevronLeft, CheckCircle, AlertCircle, Zap, WifiOff, X, AlertTriangle,
   Eye, EyeOff, MessageCircle, Flag, Award, Users, Calendar, User,
   TrendingUp, Clock, Star, ChevronRight, Shield, BookOpen, Lock,
-  RefreshCw, Copy, Bell, Brain, Sparkles
+  RefreshCw, Copy, Bell, Brain, Sparkles, GraduationCap
 } from "lucide-react";
 import { auth, db, track } from "./firebase";
 import {
@@ -1531,7 +1531,7 @@ function calcReadinessScore(history, user, daysLeft=45) {
   // 4. Coverage — subjects practiced vs subjects enrolled
   const userSubjects=user?.subjects||[];
   const practicedSubjects=[...new Set(clean.map(h=>h.subject).filter(Boolean))];
-  const coverageScore=userSubjects.length?(practicedSubjects.length/userSubjects.length)*100:50;
+  const coverageScore=userSubjects.length?Math.min(100,(practicedSubjects.length/userSubjects.length)*100):50;
 
   // 5. Days pressure factor (less time = lower effective score)
   const daysFactor=Math.max(0.70,Math.min(1,daysLeft/60));
@@ -2426,7 +2426,7 @@ function BottomNav({active,onChange,T}) {
     {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
     {key:"setup",icon:<Play size={20}/>,label:"Practice"},
     {key:"drill",icon:<Target size={20}/>,label:"Fix It"},
-    {key:"tutor",icon:<MessageCircle size={20}/>,label:"AI Tutor"},
+    {key:"tutor",icon:<GraduationCap size={20}/>,label:"AI Tutor"},
     {key:"analytics",icon:<BarChart2 size={20}/>,label:"Report"},
     {key:"profile",icon:<User size={20}/>,label:"Profile"},
   ];
@@ -2455,7 +2455,7 @@ function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfi
     {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
     {key:"setup",    icon:<Play size={20}/>,label:"CBT Practice"},
     {key:"drill",    icon:<Target size={20}/>,label:"Fix Score Blockers",premium:true},
-    {key:"tutor",    icon:<MessageCircle size={20}/>,label:"AI Tutor",premium:true},
+    {key:"tutor",    icon:<GraduationCap size={20}/>,label:"AI Tutor",premium:true},
     {key:"analytics",icon:<BarChart2 size={20}/>,label:"JUPEB Report"},
   ];
   return (
@@ -3445,8 +3445,8 @@ function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
                     <span style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color}}>{m.val}{m.suffix}</span>
                   </div>
                 </div>
-                <div style={{height:5,background:"rgba(255,255,255,0.06)",borderRadius:3}}>
-                  <div style={{height:"100%",width:`${m.val}%`,background:color,borderRadius:3,transition:"width .8s"}}/>
+                <div style={{height:5,background:"rgba(255,255,255,0.06)",borderRadius:3,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${Math.min(100,m.val)}%`,background:color,borderRadius:3,transition:"width .8s"}}/>
                 </div>
               </div>
             );
@@ -4184,7 +4184,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                 <Sparkles size={13} color={T.gold2} strokeWidth={2}/>
               </motion.div>
               <div style={{position:"absolute",bottom:-4,left:-4,width:20,height:20,borderRadius:"50%",background:T.surface,border:`1.5px solid ${T.bg}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <MessageCircle size={11} color={T.success} strokeWidth={2}/>
+                <GraduationCap size={11} color={T.success} strokeWidth={2}/>
               </div>
             </div>
             <div style={{flex:1}}>
@@ -10061,7 +10061,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
-            {icon:<MessageCircle size={18} color={T.gold}/>,label:"AI Tutor",sub:"Personalized AI-powered practice sessions",action:()=>onNav("tutor"),accent:T.gold},
+            {icon:<GraduationCap size={18} color={T.gold}/>,label:"AI Tutor",sub:"Personalized AI-powered practice sessions",action:()=>onNav("tutor"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
               :ambAppStatus==="pending"

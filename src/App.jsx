@@ -5,7 +5,7 @@ import {
   ChevronLeft, CheckCircle, AlertCircle, Zap, WifiOff, X, AlertTriangle,
   Eye, EyeOff, MessageCircle, Flag, Award, Users, Calendar, User,
   TrendingUp, Clock, Star, ChevronRight, Shield, BookOpen, Lock,
-  RefreshCw, Copy
+  RefreshCw, Copy, Bell, Brain, Sparkles
 } from "lucide-react";
 import { auth, db, track } from "./firebase";
 import {
@@ -2423,11 +2423,12 @@ function BtnPrimary({onClick,children,disabled,loading,T,style={}}) {
 // ─── BOTTOM NAV (5 tabs — mobile/tablet only) ─────────────────────────────
 function BottomNav({active,onChange,T}) {
   const items=[
-    {key:"dashboard",icon:<Home size={22}/>,label:"My Plan"},
-    {key:"setup",icon:<Play size={22}/>,label:"CBT Practice"},
-    {key:"drill",icon:<Target size={22}/>,label:"Fix It"},
-    {key:"analytics",icon:<BarChart2 size={22}/>,label:"JUPEB Report"},
-    {key:"profile",icon:<User size={22}/>,label:"Profile"},
+    {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
+    {key:"setup",icon:<Play size={20}/>,label:"Practice"},
+    {key:"drill",icon:<Target size={20}/>,label:"Fix It"},
+    {key:"tutor",icon:<MessageCircle size={20}/>,label:"AI Tutor"},
+    {key:"analytics",icon:<BarChart2 size={20}/>,label:"Report"},
+    {key:"profile",icon:<User size={20}/>,label:"Profile"},
   ];
   return (
     <nav className="cq-bottom-nav" style={{position:"fixed",bottom:0,left:0,right:0,background:T.navBg,borderTop:`1px solid ${T.navBorder}`,display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0)"}}>
@@ -2439,7 +2440,7 @@ function BottomNav({active,onChange,T}) {
               display:"flex",flexDirection:"column",alignItems:"center",gap:3,
               color:on?T.gold:"rgba(247,243,236,0.28)",transition:"color .18s",minHeight:52}}>
             {it.icon}
-            <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,letterSpacing:"0.06em",fontWeight:on?700:400}}>{it.label}</span>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:"0.04em",fontWeight:on?700:400,whiteSpace:"nowrap"}}>{it.label}</span>
             <div className="nav-dot" style={{width:on?16:0,opacity:on?1:0}}/>
           </button>
         );
@@ -2454,6 +2455,7 @@ function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfi
     {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
     {key:"setup",    icon:<Play size={20}/>,label:"CBT Practice"},
     {key:"drill",    icon:<Target size={20}/>,label:"Fix Score Blockers",premium:true},
+    {key:"tutor",    icon:<MessageCircle size={20}/>,label:"AI Tutor",premium:true},
     {key:"analytics",icon:<BarChart2 size={20}/>,label:"JUPEB Report"},
   ];
   return (
@@ -3615,6 +3617,68 @@ function WhatsAppBanner({user,T,onSaved}){
   );
 }
 
+// ─── AMBIENT NOTIFICATION TOAST — fades in, holds, fades out; takes no
+// permanent layout space. Distinct from ToastContainer/showToast above,
+// which is the app's standard bottom-of-screen success/error system and
+// is untouched. ──────────────────────────────────────────────────────────
+function DashNotifToast({icon,children,delay=0,duration=4200,T,dark}){
+  const[phase,setPhase]=useState("hidden"); // hidden -> shown -> gone
+  useEffect(()=>{
+    const inT=setTimeout(()=>setPhase("shown"),delay);
+    const outT=setTimeout(()=>setPhase("gone"),delay+duration);
+    return()=>{clearTimeout(inT);clearTimeout(outT);};
+  },[delay,duration]);
+  if(phase==="gone")return null;
+  return(
+    <motion.div initial={{opacity:0,y:-6}} animate={phase==="shown"?{opacity:1,y:0}:{opacity:0,y:-6}}
+      transition={{duration:0.4,ease:[0.16,1,0.3,1]}}
+      style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",background:dark?"rgba(10,20,16,0.94)":"rgba(245,240,232,0.96)",backdropFilter:"blur(6px)",borderRadius:12,border:`1px solid ${T.border}`,marginBottom:8,pointerEvents:"auto"}}>
+      <span style={{fontSize:13,flexShrink:0}}>{icon}</span>
+      <span style={{fontFamily:"'DM Mono',monospace",fontSize:10.5,color:T.text,lineHeight:1.5}}>{children}</span>
+    </motion.div>
+  );
+}
+
+// ─── NOTIFICATION INBOX — permanent record of today's ambient nudges,
+// opened via the header bell. Unread items carry a gold dot until opened. ──
+function DashNotifPanel({notifications,readIds,onClose,T}){
+  return(
+    <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:300,display:"flex",justifyContent:"center"}}
+      onClick={onClose}>
+      <motion.div initial={{y:-30,opacity:0}} animate={{y:0,opacity:1}} exit={{y:-30,opacity:0}}
+        transition={{duration:0.3,ease:[0.16,1,0.3,1]}}
+        onClick={e=>e.stopPropagation()}
+        style={{width:"100%",maxWidth:640,background:T.bg,borderBottom:`1px solid ${T.border}`,maxHeight:"82vh",overflowY:"auto",borderRadius:"0 0 20px 20px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 20px 12px",position:"sticky",top:0,background:T.bg,borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700,color:T.text}}>Notifications</div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",padding:4}}>
+            <X size={18} color={T.muted}/>
+          </button>
+        </div>
+        <div style={{padding:"8px 20px 20px"}}>
+          {notifications.length===0?(
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,textAlign:"center",padding:"30px 0"}}>You're all caught up.</div>
+          ):(
+            <div style={{marginBottom:18}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}90`,letterSpacing:"0.18em",margin:"10px 0 8px"}}>TODAY</div>
+              {notifications.map(n=>(
+                <div key={n.id} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+                  <span style={{fontSize:14,flexShrink:0}}>{n.icon}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{n.text}</div>
+                  </div>
+                  {!readIds.has(n.id)&&<div style={{width:7,height:7,borderRadius:"50%",background:T.gold,flexShrink:0,marginTop:5}}/>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setDark,T,showToast,streak,onUpgrade,onUpdateUser}) {
   const readiness=useMemo(()=>calcReadiness(history),[history]);
@@ -4029,6 +4093,34 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   const ringFrac=pointsData?Math.min(1,pointsData.total/targetPts):Math.min(1,(readiness||0)/100);
   const isDesktop=useIsDesktop(900);
 
+  // ── AMBIENT NOTIFICATIONS — same signals that used to live in permanent
+  // banners (yesterday's conversation, risk/competition standing, streak
+  // milestone, WhatsApp nudge), now surfaced as fading toasts plus a
+  // persistent bell/inbox so nothing is lost if the moment is missed.
+  // Computed independently of the CREDIQ INTELLIGENCE CARD block below so
+  // that block's own logic is untouched. ─────────────────────────────────
+  const notifIntel=useMemo(()=>hasData?calcReadinessScore(history,user,daysLeft):null,[history,user,daysLeft,hasData]);
+  const dashNotifications=useMemo(()=>{
+    const list=[];
+    if(yesterdayConversation)list.push({id:"conversation",icon:"💭",text:yesterdayConversation.sentences.join(" ")});
+    if(missionList.length>0){
+      const top=missionList[0];
+      list.push({id:"focus",icon:"🎯",text:`${top.topic} is your weakest topic right now — +${top.pointPotential} pts if you fix it.`});
+    }
+    if(hasData&&notifIntel){
+      const riskTxt=`${notifIntel.score}/100 readiness · ${notifIntel.probability}% on track for your cutoff`+(competitionData&&competitionData.percentile!=null?` · better prepared than ${competitionData.percentile}% of peers with the same target`:"");
+      list.push({id:"risk",icon:"📊",text:riskTxt});
+    }
+    if(streak>=14)list.push({id:"milestone",icon:"🏆",text:`Day ${streak} consistency — you're building the kind of consistency that gets admissions.`});
+    if(!user?.whatsapp)list.push({id:"whatsapp",icon:"💬",text:"Get daily reminders on WhatsApp — add your number to stay on track."});
+    return list;
+  },[yesterdayConversation,missionList,hasData,notifIntel,competitionData,streak,user?.whatsapp]);
+  const notifToastDelays={conversation:700,focus:3550,risk:6400,milestone:11200,whatsapp:16000};
+  const[readNotifIds,setReadNotifIds]=useState(()=>new Set());
+  const[showInbox,setShowInbox]=useState(false);
+  const unreadNotifCount=dashNotifications.filter(n=>!readNotifIds.has(n.id)).length;
+  const openInbox=()=>{setShowInbox(true);setReadNotifIds(new Set(dashNotifications.map(n=>n.id)));};
+
   return (
     <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:90}}>
 
@@ -4051,12 +4143,62 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:daysLeft>60?"rgba(74,222,128,0.5)":daysLeft>30?`${T.gold}80`:"rgba(249,115,22,0.5)",letterSpacing:"0.12em"}}>DAYS LEFT</div>
           </div>
           {user.isPremium&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4ade80",fontWeight:700}}>✦</div>}
+          <button onClick={openInbox} style={{position:"relative",background:"none",border:"none",cursor:"pointer",padding:4,display:"flex",alignItems:"center"}}>
+            <Bell size={18} color={T.muted}/>
+            {unreadNotifCount>0&&(
+              <div style={{position:"absolute",top:0,right:0,minWidth:14,height:14,borderRadius:8,background:"#f97316",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Mono',monospace",fontSize:7,fontWeight:700,color:"#fff",padding:"0 3px"}}>
+                {unreadNotifCount}
+              </div>
+            )}
+          </button>
           <InstallButton T={T}/>
           <ThemeBtn dark={dark} setDark={setDark} T={T}/>
         </motion.div>
+
+        {/* ── AMBIENT TOASTS — zero-height anchor so they overlay the space
+             below the header without pushing content down. Each toast now
+             owns its own background/border, so it fully unmounts (no ghost
+             box left behind) once it fades out. ── */}
+        <div style={{position:"relative",height:0}}>
+          <div style={{position:"absolute",top:6,left:0,right:0,zIndex:50,pointerEvents:"none"}}>
+            {dashNotifications.map(n=>(
+              <DashNotifToast key={n.id} icon={n.icon} delay={notifToastDelays[n.id]||500} T={T} dark={dark}>{n.text}</DashNotifToast>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div style={{padding:isDesktop?"24px 32px 0":"18px 18px 0",maxWidth:isDesktop?1100:640,margin:"0 auto",width:"100%"}}>
+
+        {/* ── AI TUTOR — hero card, first thing on the dashboard ── */}
+        <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.5,delay:0.05,ease:EASE}}
+          style={{position:"relative",overflow:"hidden",background:`linear-gradient(135deg,${T.surface2} 0%,${dark?"#0f2218":"#EDE7D8"} 100%)`,border:`1.5px solid ${T.gold}`,borderRadius:20,padding:"20px 20px 18px",marginBottom:16}}>
+          <motion.div animate={{opacity:[0.5,0.9,0.5],scale:[1,1.08,1]}} transition={{duration:3.2,repeat:Infinity,ease:"easeInOut"}}
+            style={{position:"absolute",top:-35,right:-25,width:150,height:150,borderRadius:"50%",background:`radial-gradient(circle,${T.gold}26 0%,transparent 70%)`,pointerEvents:"none"}}/>
+          <div style={{display:"flex",alignItems:"flex-start",gap:14,position:"relative"}}>
+            <div style={{position:"relative",flexShrink:0,width:54,height:54}}>
+              <div style={{width:54,height:54,borderRadius:15,background:`linear-gradient(135deg,${T.gold}28 0%,${T.gold}0a 100%)`,border:`1px solid ${T.gold}50`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <Brain size={27} color={T.gold} strokeWidth={1.6}/>
+              </div>
+              <motion.div animate={{opacity:[0.3,1,0.3],scale:[0.85,1,0.85]}} transition={{duration:2.2,repeat:Infinity,ease:"easeInOut"}} style={{position:"absolute",top:-5,right:-5}}>
+                <Sparkles size={13} color={T.gold2} strokeWidth={2}/>
+              </motion.div>
+              <div style={{position:"absolute",bottom:-4,left:-4,width:20,height:20,borderRadius:"50%",background:T.surface,border:`1.5px solid ${T.bg}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <MessageCircle size={11} color={T.success} strokeWidth={2}/>
+              </div>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700,color:T.text}}>AI Tutor</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.5}}>
+                Stuck on a question? Get a step-by-step explanation — like a teacher, in seconds.
+              </div>
+            </div>
+          </div>
+          <motion.button whileTap={{scale:0.97}} onClick={()=>onNav("tutor")}
+            style={{width:"100%",marginTop:16,padding:"13px 0",border:"none",borderRadius:26,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 24px rgba(0,75,59,0.4)"}}>
+            {user?.isPremium?"Ask AI Tutor →":"Unlock AI Tutor →"}
+          </motion.button>
+        </motion.div>
 
         {/* ── FIRST SESSION ACTIVATION ── */}
         {showActivation&&(
@@ -4068,31 +4210,9 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           </motion.div>
         )}
 
-        {/* ── MILESTONE: PARENT CONFIDENCE ── */}
-        {streak>=14&&(
-          <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:0.15,ease:EASE}}
-            style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.25)",borderRadius:12,padding:"14px 18px",marginBottom:16,display:"flex",alignItems:"center",gap:14}}>
-            <div style={{fontSize:28,flexShrink:0}}>🏆</div>
-            <div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}70`,letterSpacing:"0.16em",marginBottom:4}}>DAY {streak} CONSISTENCY</div>
-              <div style={{fontFamily:"'Playfair Display',serif",fontSize:13,fontWeight:600,color:T.text,lineHeight:1.4}}>"You're building the kind of consistency that gets admissions."</div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* ── B.5: CONTINUOUS CONVERSATION — memory spoken naturally, not labeled ── */}
-        {yesterdayConversation&&(
-          <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} transition={{duration:0.35,ease:EASE}}
-            style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
-            <div style={{fontFamily:"'Playfair Display',serif",fontSize:13,fontStyle:"italic",color:T.text,lineHeight:1.6,minHeight:20}}>
-              {typedConvo}
-              {typedConvo.length<yesterdayConversation.sentences.join(" ").length&&<span style={{animation:"blink 0.8s step-end infinite"}}>▋</span>}
-            </div>
-            {yesterdayConversation.tier===1&&typedConvo.length>=yesterdayConversation.sentences.join(" ").length&&(
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}70`,letterSpacing:"0.1em",marginTop:8}}>→ {yesterdayConversation.weakTopic}</div>
-            )}
-          </motion.div>
-        )}
+        {/* ── Milestone (streak≥14) and yesterday's-conversation memory now
+             surface as ambient toasts + the notification bell/inbox above,
+             instead of permanent banners here. ── */}
 
         {/* ── TODAY'S MOVE — multi-topic fastest path ── */}
         {hasData&&missionList.length>0&&(
@@ -4138,6 +4258,24 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
             </div>
           </motion.div>
         )}
+
+        {/* ── QUICK ACTIONS ── */}
+        <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.45,delay:subjStagger+0.05,ease:EASE}} style={{marginBottom:16}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}90`,letterSpacing:"0.2em",marginBottom:10}}>QUICK ACTIONS</div>
+          <div style={{display:"flex",gap:8}}>
+            {[
+              {icon:Target,label:"Fix Weak Spots",color:"#f97316",action:()=>user?.isPremium?onNav("drill"):onUpgrade()},
+              {icon:TrendingUp,label:"Full Report",color:"#4ade80",action:()=>onNav("analytics")},
+              {icon:Users,label:"Compare Rank",color:"#5DADE2",action:()=>onNav("intelligence")},
+            ].map(a=>(
+              <button key={a.label} onClick={a.action} className="btn-press"
+                style={{flex:1,padding:"14px 8px",background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,textAlign:"center",cursor:"pointer"}}>
+                <a.icon size={18} color={a.color} style={{margin:"0 auto 7px",display:"block"}}/>
+                <div style={{fontSize:9,color:T.text,lineHeight:1.3,fontFamily:"'DM Mono',monospace"}}>{a.label}</div>
+              </button>
+            ))}
+          </div>
+        </motion.div>
 
         {/* ── WHATSAPP BANNER — shown once for users without a number ── */}
         <WhatsAppBanner user={user} T={T} onSaved={onUpdateUser}/>
@@ -4667,6 +4805,11 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
         </div>{/* ← END DESKTOP GRID */}
 
       </div>
+
+      <AnimatePresence>
+        {showInbox&&<DashNotifPanel notifications={dashNotifications} readIds={readNotifIds} onClose={()=>setShowInbox(false)} T={T}/>}
+      </AnimatePresence>
+
     </div>
   );
 }
@@ -5237,7 +5380,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
           {q.topic&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,letterSpacing:"0.12em",flex:1,marginRight:8}}>{q.topic.toUpperCase()}</div>}
           <button className="btn-press" onClick={()=>setShowNav(!showNav)} style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>{answeredCount}/{totalQ} answered</button>
         </div>
-        <div style={{fontSize:15,color:T.text,lineHeight:1.65,marginBottom:22,fontWeight:500,fontFamily:"'Playfair Display','Noto Sans Math',serif"}}>{q.question}</div>
+        <div style={{fontSize:15,color:T.text,lineHeight:1.65,marginBottom:22,fontWeight:500,fontFamily:"'Playfair Display','Noto Sans Math',serif",whiteSpace:"pre-wrap"}}>{q.question}</div>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {Object.entries(q.options).sort(([a],[b])=>a.charCodeAt(0)-b.charCodeAt(0)).map(([k,v])=>{
             const selected=answers[current]===k;
@@ -5783,7 +5926,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
 
       <div style={{padding:18,maxWidth:700,margin:"0 auto",width:"100%"}}>
         <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:8}}>{q.topic?.toUpperCase()}</div>
-        <div style={{fontSize:16,lineHeight:1.5,marginBottom:20,color:T.text}}>{q.question}</div>
+        <div style={{fontSize:16,lineHeight:1.5,marginBottom:20,color:T.text,whiteSpace:"pre-wrap"}}>{q.question}</div>
 
         {optionEntries.map(([letter,text])=>{
           const isSel=selectedOpt===letter;
@@ -5811,7 +5954,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
                 :<><AlertCircle size={16} color="#C0392B"/><span style={{color:"#C0392B",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>NOT QUITE</span></>}
             </div>
             {q.explanation&&(
-              <div style={{padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.55,color:T.text}}>
+              <div style={{padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.55,color:T.text,whiteSpace:"pre-wrap"}}>
                 {q.explanation}
               </div>
             )}
@@ -9401,7 +9544,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
 
           {/* Question text — only show if not empty */}
           {q.question&&q.question.trim()&&(
-            <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`}}>
+            <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,whiteSpace:"pre-wrap"}}>
               {q.question}
             </div>
           )}
@@ -9918,7 +10061,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
-            ...(isFounder(user)?[{icon:<MessageCircle size={18} color={T.gold}/>,label:"AI Tutor (Test)",sub:"Founder-only while in test phase",action:()=>onNav("tutor"),accent:T.gold}]:[]),
+            {icon:<MessageCircle size={18} color={T.gold}/>,label:"AI Tutor",sub:"Personalized AI-powered practice sessions",action:()=>onNav("tutor"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
               :ambAppStatus==="pending"
@@ -10822,8 +10965,8 @@ export default function App() {
   };
 
   const handleNav=s=>{
-    // Gate drill behind premium
-    if(s==="drill"&&!user?.isPremium){setShowPremiumGate(true);return;}
+    // Gate drill and AI Tutor behind premium
+    if((s==="drill"||s==="tutor")&&!user?.isPremium){setShowPremiumGate(true);return;}
     if(s==="editprofile"){setScreen("editprofile");return;}
     // Lazy load questions when Practice or Drill is tapped
     if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){
@@ -10891,7 +11034,7 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
-          {screen==="tutor"&&user&&isFounder(user)&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

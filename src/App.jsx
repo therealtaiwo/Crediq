@@ -5339,7 +5339,7 @@ function renderInlineBold(line,T){
     if(part.startsWith("**")&&part.endsWith("**")){
       return <strong key={i} style={{color:T.text,fontWeight:700}}>{part.slice(2,-2)}</strong>;
     }
-    return <React.Fragment key={i}>{part}</React.Fragment>;
+    return part;
   });
 }
 

@@ -2457,6 +2457,7 @@ function BottomNav({active,onChange,T}) {
 function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfile}) {
   const items=[
     {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
+    {key:"intelligence",icon:<Brain size={20}/>,label:"Intelligence Report"},
     {key:"setup",    icon:<Play size={20}/>,label:"CBT Practice"},
     {key:"drill",    icon:<Target size={20}/>,label:"Fix Score Blockers"},
     {key:"tutor",    icon:<GraduationCap size={20}/>,label:"AI Tutor"},
@@ -3380,6 +3381,7 @@ function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
   const actions=calcNextActions(history,user,intel);
   const weakTopics=calcWeakTopics(history);
   const subjectStats=calcSubjectStats(history);
+  const isDesktop=useIsDesktop(900);
   const riskColor=intel.risk==="LOW"?"#4ade80":intel.risk==="MODERATE"?"#f97316":intel.risk==="HIGH"?"#ef4444":"#dc2626";
   const riskEmoji=intel.risk==="LOW"?"🟢":intel.risk==="MODERATE"?"🟡":intel.risk==="HIGH"?"🔴":"⛔";
 
@@ -3406,7 +3408,10 @@ function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
         <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",marginTop:3}}>{daysLeft} days to JUPEB 2026 · updated after every session</div>
       </div>
 
-      <div style={{padding:"20px",maxWidth:520,margin:"0 auto",width:"100%"}}>
+      <div style={{padding:isDesktop?"24px 32px":"20px",maxWidth:isDesktop?1100:520,margin:"0 auto",width:"100%"}}>
+
+        <div className={isDesktop?"cq-dash-grid":""}>
+        <div className={isDesktop?"cq-dash-col":""}>{/* ← LEFT COLUMN: score + breakdown */}
 
         {/* Score hero */}
         <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:16,padding:"24px",textAlign:"center",marginBottom:14,position:"relative",overflow:"hidden"}}>
@@ -3456,6 +3461,24 @@ function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
             );
           })}
         </div>
+
+        {/* What this means */}
+        <div style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"16px",marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:8}}>WHAT THIS MEANS FOR YOU</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.9}}>
+            {intel.risk==="LOW"&&`Strong position. ${intel.probability}% probability is solid — keep your ${intel.sessionsThisWeek} sessions/week pace and you'll walk into that exam hall confident.`}
+            {intel.risk==="MODERATE"&&`You're making progress but there are clear gaps. Fix your weak topics with targeted drills and push your weekly sessions to 5. The last ${daysLeft} days are what decides this.`}
+            {intel.risk==="HIGH"&&`This is recoverable — but only if you act now. You need focused, consistent sessions starting today. Don't waste time on subjects you already know.`}
+            {intel.risk==="CRITICAL"&&`${daysLeft} days is enough time but only with serious daily effort. Start with one session today. Come back tomorrow. Repeat.`}
+          </div>
+        </div>
+
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}50`,textAlign:"center",lineHeight:1.8}}>
+          Score updates after every session · Based on {intel.totalSessions} session{intel.totalSessions!==1?"s":""}
+        </div>
+
+        </div>{/* ← END LEFT COLUMN */}
+        <div className={isDesktop?"cq-dash-col":""}>{/* ← RIGHT COLUMN: subjects + actions */}
 
         {/* Subject performance */}
         {(user?.subjects||[]).length>0&&(
@@ -3540,20 +3563,9 @@ function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
           </div>
         )}
 
-        {/* What this means */}
-        <div style={{background:"rgba(184,151,62,0.06)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:12,padding:"16px",marginBottom:14}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.12em",marginBottom:8}}>WHAT THIS MEANS FOR YOU</div>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,lineHeight:1.9}}>
-            {intel.risk==="LOW"&&`Strong position. ${intel.probability}% probability is solid — keep your ${intel.sessionsThisWeek} sessions/week pace and you'll walk into that exam hall confident.`}
-            {intel.risk==="MODERATE"&&`You're making progress but there are clear gaps. Fix your weak topics with targeted drills and push your weekly sessions to 5. The last ${daysLeft} days are what decides this.`}
-            {intel.risk==="HIGH"&&`This is recoverable — but only if you act now. You need focused, consistent sessions starting today. Don't waste time on subjects you already know.`}
-            {intel.risk==="CRITICAL"&&`${daysLeft} days is enough time but only with serious daily effort. Start with one session today. Come back tomorrow. Repeat.`}
-          </div>
-        </div>
+        </div>{/* ← END RIGHT COLUMN */}
+        </div>{/* ← END DESKTOP GRID */}
 
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}50`,textAlign:"center",lineHeight:1.8}}>
-          Score updates after every session · Based on {intel.totalSessions} session{intel.totalSessions!==1?"s":""}
-        </div>
       </div>
     </div>
   );
@@ -10048,7 +10060,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
-            {icon:<GraduationCap size={18} color={T.gold}/>,label:"AI Tutor",sub:"Personalized AI-powered practice sessions",action:()=>onNav("tutor"),accent:T.gold},
+            {icon:<Brain size={18} color={T.gold}/>,label:"Intelligence Report",sub:"Your full readiness score, breakdown & next actions",action:()=>onNav("intelligence"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
               :ambAppStatus==="pending"

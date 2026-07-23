@@ -2458,7 +2458,7 @@ function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfi
   const items=[
     {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
     {key:"setup",    icon:<Play size={20}/>,label:"CBT Practice"},
-    {key:"drill",    icon:<Target size={20}/>,label:"Fix Score Blockers",premium:true},
+    {key:"drill",    icon:<Target size={20}/>,label:"Fix Score Blockers"},
     {key:"tutor",    icon:<GraduationCap size={20}/>,label:"AI Tutor"},
     {key:"analytics",icon:<BarChart2 size={20}/>,label:"JUPEB Report"},
   ];
@@ -3532,7 +3532,7 @@ function IntelligenceScreen({user,history,onBack,onNav,T,onUpgrade}){
                 background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
                 color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,
                 fontWeight:700,cursor:"pointer",letterSpacing:"0.01em"}}>
-              Unlock Full Recovery Plan — ₦3,500
+              Unlock Full Recovery Plan — ₦2,500
             </button>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.25)",textAlign:"center",marginTop:8}}>
               One payment · {daysLeft} days of unlimited access
@@ -4107,10 +4107,6 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   const dashNotifications=useMemo(()=>{
     const list=[];
     if(yesterdayConversation)list.push({id:"conversation",icon:"💭",text:yesterdayConversation.sentences.join(" ")});
-    if(missionList.length>0){
-      const top=missionList[0];
-      list.push({id:"focus",icon:"🎯",text:`${top.topic} is your weakest topic right now — +${top.pointPotential} pts if you fix it.`});
-    }
     if(hasData&&notifIntel){
       const riskTxt=`${notifIntel.score}/100 readiness · ${notifIntel.probability}% on track for your cutoff`+(competitionData&&competitionData.percentile!=null?` · better prepared than ${competitionData.percentile}% of peers with the same target`:"");
       list.push({id:"risk",icon:"📊",text:riskTxt});
@@ -4118,8 +4114,16 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
     if(streak>=14)list.push({id:"milestone",icon:"🏆",text:`Day ${streak} consistency — you're building the kind of consistency that gets admissions.`});
     if(!user?.whatsapp)list.push({id:"whatsapp",icon:"💬",text:"Get daily reminders on WhatsApp — add your number to stay on track."});
     return list;
-  },[yesterdayConversation,missionList,hasData,notifIntel,competitionData,streak,user?.whatsapp]);
-  const notifToastDelays={conversation:700,focus:3550,risk:6400,milestone:11200,whatsapp:16000};
+  },[yesterdayConversation,hasData,notifIntel,competitionData,streak,user?.whatsapp]);
+  // Strictly sequential — each toast's window ends before the next starts,
+  // so only one is ever competing for attention at a time.
+  const TOAST_DURATION=4200,TOAST_GAP=400;
+  const notifToastDelays=useMemo(()=>{
+    const map={};
+    let t=700;
+    dashNotifications.forEach(n=>{map[n.id]=t;t+=TOAST_DURATION+TOAST_GAP;});
+    return map;
+  },[dashNotifications]);
   const[readNotifIds,setReadNotifIds]=useState(()=>new Set());
   const[showInbox,setShowInbox]=useState(false);
   const unreadNotifCount=dashNotifications.filter(n=>!readNotifIds.has(n.id)).length;
@@ -4158,17 +4162,21 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           <InstallButton T={T}/>
           <ThemeBtn dark={dark} setDark={setDark} T={T}/>
         </motion.div>
+      </div>
 
-        {/* ── AMBIENT TOASTS — zero-height anchor so they overlay the space
-             below the header without pushing content down. Each toast now
-             owns its own background/border, so it fully unmounts (no ghost
-             box left behind) once it fades out. ── */}
-        <div style={{position:"relative",height:0}}>
-          <div style={{position:"absolute",top:6,left:0,right:0,zIndex:50,pointerEvents:"none"}}>
-            {dashNotifications.map(n=>(
-              <DashNotifToast key={n.id} icon={n.icon} delay={notifToastDelays[n.id]||500} T={T} dark={dark}>{n.text}</DashNotifToast>
-            ))}
-          </div>
+      {/* ── AMBIENT TOASTS — a real sibling block below the header (not a
+           flex child of it), so it actually spans the page instead of
+           collapsing to a point mid-header. Mobile: full-width strip under
+           the header. Desktop: a compact stack pinned to the top-right,
+           like a normal desktop notification tray, instead of a giant
+           banner across a 1100px-wide screen. ── */}
+      <div style={{position:"relative",height:0,zIndex:60}}>
+        <div style={isDesktop?
+          {position:"absolute",top:10,right:20,width:340,pointerEvents:"none"}:
+          {position:"absolute",top:6,left:0,right:0,pointerEvents:"none"}}>
+          {dashNotifications.map(n=>(
+            <DashNotifToast key={n.id} icon={n.icon} delay={notifToastDelays[n.id]||500} T={T} dark={dark}>{n.text}</DashNotifToast>
+          ))}
         </div>
       </div>
 
@@ -4218,6 +4226,14 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
              surface as ambient toasts + the notification bell/inbox above,
              instead of permanent banners here. ── */}
 
+        {/* ── DESKTOP 2-COLUMN GRID — starts here so Today's Move, the
+             Intelligence card, the mission ring and Biggest Battles form a
+             real left column instead of stretching edge-to-edge on wide
+             screens. Quick Actions + subjects moved into the right column
+             below so desktop isn't just one long centered strip. ── */}
+        <div className={isDesktop?"cq-dash-grid":""}>
+        <div className={isDesktop?"cq-dash-col":""}>{/* ← LEFT COLUMN: journey + plan */}
+
         {/* ── TODAY'S MOVE — multi-topic fastest path ── */}
         {hasData&&missionList.length>0&&(
           <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:subjStagger,ease:EASE}} style={{marginBottom:16}}>
@@ -4262,27 +4278,6 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
             </div>
           </motion.div>
         )}
-
-        {/* ── QUICK ACTIONS ── */}
-        <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.45,delay:subjStagger+0.05,ease:EASE}} style={{marginBottom:16}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}90`,letterSpacing:"0.2em",marginBottom:10}}>QUICK ACTIONS</div>
-          <div style={{display:"flex",gap:8}}>
-            {[
-              {icon:Target,label:"Fix Weak Spots",color:"#f97316",action:()=>user?.isPremium?onNav("drill"):onUpgrade()},
-              {icon:TrendingUp,label:"Full Report",color:"#4ade80",action:()=>onNav("analytics")},
-              {icon:Users,label:"Compare Rank",color:"#5DADE2",action:()=>onNav("intelligence")},
-            ].map(a=>(
-              <button key={a.label} onClick={a.action} className="btn-press"
-                style={{flex:1,padding:"14px 8px",background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,textAlign:"center",cursor:"pointer"}}>
-                <a.icon size={18} color={a.color} style={{margin:"0 auto 7px",display:"block"}}/>
-                <div style={{fontSize:9,color:T.text,lineHeight:1.3,fontFamily:"'DM Mono',monospace"}}>{a.label}</div>
-              </button>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* ── WHATSAPP BANNER — shown once for users without a number ── */}
-        <WhatsAppBanner user={user} T={T} onSaved={onUpdateUser}/>
 
         {/* ── CREDIQ INTELLIGENCE CARD ── */}
         {(()=>{
@@ -4378,7 +4373,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
                         background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
                         color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:9,
                         fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
-                      Unlock Recovery Plan — ₦3,500
+                      Unlock Recovery Plan — ₦2,500
                     </button>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(247,243,236,0.3)"}}>Personalized to your exact weak spots</div>
                   </div>
@@ -4394,8 +4389,6 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
         })()}
 
         {/* ── DESKTOP 2-COLUMN GRID ── */}
-        <div className={isDesktop?"cq-dash-grid":""}>
-        <div className={isDesktop?"cq-dash-col":""}>{/* ← LEFT COLUMN: journey + plan */}
 
         {/* ── COMMUNITY COUNTER ── */}
         {(()=>{
@@ -4598,6 +4591,27 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
 
         </div>{/* ← END LEFT COLUMN */}
         <div className={isDesktop?"cq-dash-col":""}>{/* ← RIGHT COLUMN: subjects + actions */}
+
+        {/* ── QUICK ACTIONS ── */}
+        <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,ease:EASE}} style={{marginBottom:16}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}90`,letterSpacing:"0.2em",marginBottom:10}}>QUICK ACTIONS</div>
+          <div style={{display:"flex",gap:8}}>
+            {[
+              {icon:Target,label:"Fix Weak Spots",color:"#f97316",action:()=>user?.isPremium?onNav("drill"):onUpgrade()},
+              {icon:TrendingUp,label:"Full Report",color:"#4ade80",action:()=>onNav("analytics")},
+              {icon:Users,label:"Compare Rank",color:"#5DADE2",action:()=>onNav("intelligence")},
+            ].map(a=>(
+              <button key={a.label} onClick={a.action} className="btn-press"
+                style={{flex:1,padding:"14px 8px",background:T.surface,borderRadius:14,border:`1px solid ${T.border}`,textAlign:"center",cursor:"pointer"}}>
+                <a.icon size={18} color={a.color} style={{margin:"0 auto 7px",display:"block"}}/>
+                <div style={{fontSize:9,color:T.text,lineHeight:1.3,fontFamily:"'DM Mono',monospace"}}>{a.label}</div>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* ── WHATSAPP BANNER — shown once for users without a number ── */}
+        <WhatsAppBanner user={user} T={T} onSaved={onUpdateUser}/>
 
         {/* ── SUBJECT BREAKDOWN ROWS ── */}
         {userSubjects.length>0&&(
@@ -6320,7 +6334,7 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
                 background:"linear-gradient(135deg,#004B3B,#8A6A1E)",
                 color:"#F7F3EC",fontFamily:"'DM Mono',monospace",fontSize:10,
                 fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>
-              Unlock My Recovery Plan — ₦3,500 →
+              Unlock My Recovery Plan — ₦2,500 →
             </button>
           </motion.div>
         )}
@@ -8229,10 +8243,10 @@ function FounderDashboardScreen({onBack,T,showToast}){
                   <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.2)",borderRadius:10,padding:"12px 16px",marginTop:6}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,marginBottom:4}}>PREDICTED REVENUE (next 7 days)</div>
                     <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:900,color:T.gold}}>
-                      ₦{((segments.likelyToPay?.length||0)*3500*0.25).toLocaleString("en-NG",{maximumFractionDigits:0})}
+                      ₦{((segments.likelyToPay?.length||0)*2500*0.25).toLocaleString("en-NG",{maximumFractionDigits:0})}
                     </div>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginTop:4}}>
-                      25% conversion of {segments.likelyToPay?.length||0} "Likely to Pay" users at ₦3,500
+                      25% conversion of {segments.likelyToPay?.length||0} "Likely to Pay" users at ₦2,500
                     </div>
                   </div>
                 </div>
@@ -10969,8 +10983,8 @@ export default function App() {
   };
 
   const handleNav=s=>{
-    // Gate drill behind premium — AI Tutor is free to enter, paywall triggers at the "explain" moment instead
-    if(s==="drill"&&!user?.isPremium){setShowPremiumGate(true);return;}
+    // AI Tutor and Drill are both free to enter — their own internal logic
+    // (weekly cap for Drill, per-tap check for AI Tutor) gates the actual action
     if(s==="editprofile"){setScreen("editprofile");return;}
     // Lazy load questions when Practice or Drill is tapped
     if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){

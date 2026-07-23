@@ -4558,37 +4558,6 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           )}
         </motion.div>
 
-        {/* ── YOUR BIGGEST BATTLES ── */}
-        {hasData&&blockersBySubject.length>0&&(
-          <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:subjStagger+0.1,ease:EASE}} style={{marginBottom:16}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,letterSpacing:"0.2em",marginBottom:8,paddingLeft:2}}>YOUR BIGGEST BATTLES</div>
-            {blockersBySubject.map((sb,si)=>{
-              const meta=SUBJECT_META[sb.subject]||{icon:"BKS",color:T.gold};
-              return (
-                <div key={sb.subject} style={{marginBottom:si<blockersBySubject.length-1?8:0,background:T.surface,border:`1px solid ${T.border}`,borderLeft:"3px solid rgba(239,68,68,0.45)",borderRadius:12,padding:"12px 14px 10px"}}>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(239,68,68,0.6)",letterSpacing:"0.14em",marginBottom:8}}>🔥 {sb.subject.toUpperCase()}</div>
-                  {sb.blockers.map((b,bi)=>(
-                    <div key={b.topic} style={{marginBottom:bi<sb.blockers.length-1?10:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-                        <span style={{fontSize:11}}>{bi===0?"🔥":"⚡"}</span>
-                        <span style={{fontSize:13,color:T.text,fontWeight:500,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{b.topic}</span>
-                      </div>
-                      <div style={{display:"flex",gap:14,fontFamily:"'DM Mono',monospace",fontSize:9,alignItems:"center"}}>
-                        <span><span style={{color:"#f97316",fontWeight:700}}>{b.accuracy}%</span><span style={{color:`${T.muted}80`}}> → </span><span style={{color:"#4ade80",fontWeight:700}}>60%</span></span>
-                        <span><span style={{color:`${T.muted}80`}}>Reward: </span><span style={{color:T.gold,fontWeight:700}}>+{Math.max(1,Math.round(b.costPct/2))} marks</span></span>
-                      </div>
-                    </div>
-                  ))}
-                  <motion.button whileTap={{scale:0.97}} onClick={()=>user?.isPremium?onNav("drill"):onUpgrade()}
-                    style={{marginTop:10,width:"100%",minHeight:52,padding:"0 18px",border:"1px solid rgba(239,68,68,0.2)",borderRadius:26,background:"rgba(239,68,68,0.05)",color:"#ef4444",fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer",letterSpacing:"0.08em",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    {user?.isPremium?"15 questions today →":"Fix this →"}
-                  </motion.button>
-                </div>
-              );
-            })}
-          </motion.div>
-        )}
-
         </div>{/* ← END LEFT COLUMN */}
         <div className={isDesktop?"cq-dash-col":""}>{/* ← RIGHT COLUMN: subjects + actions */}
 
@@ -4744,17 +4713,17 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.4,delay:subjStagger+0.18,ease:EASE}} style={{marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:12}}>
               <div style={{minWidth:0}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,letterSpacing:"0.14em",marginBottom:4}}>CBT READY</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,letterSpacing:"0.14em",marginBottom:4}}>FULL PRACTICE EXAM</div>
                 {latestCBT?(
                   <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:T.text}}>
-                    Last sim: {latestCBT.pct}% · {latestCBT.grade}
+                    Last score: {latestCBT.pct}% · Grade {latestCBT.grade}
                   </div>
                 ):(
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:`${T.muted}88`}}>No simulation yet</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:`${T.muted}88`}}>Take a full timed exam to see where you stand</div>
                 )}
               </div>
               <motion.button whileTap={{scale:0.96}} onClick={()=>onNav("setup")} style={{minHeight:40,padding:"0 18px",border:`1px solid ${T.gold}40`,borderRadius:24,background:`${T.gold}12`,color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,cursor:"pointer",letterSpacing:"0.06em",whiteSpace:"nowrap",flexShrink:0,marginLeft:12,display:"flex",alignItems:"center"}}>
-                {latestCBT?"Retake →":"Simulate →"}
+                {latestCBT?"Retake Exam →":"Take Exam →"}
               </motion.button>
             </div>
           </motion.div>

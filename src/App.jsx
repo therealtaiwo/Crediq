@@ -5322,6 +5322,17 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
 // Lightweight renderer for AI Tutor output — handles **bold** headers and
 // inline **bold**, real paragraph spacing. No markdown library dependency;
 // just enough to stop raw ** characters from showing to students.
+// Each header is styled deterministically here — not left to the model to
+// get right, since it controls the exact header text via the prompt anyway.
+const AI_TUTOR_SECTION_STYLE={
+  "Concept":{icon:"🧠",color:"#F5C542"},
+  "Formula":{icon:"📐",color:"#5DADE2"},
+  "Steps":{icon:"🪜",color:"#58D68D"},
+  "Why this is correct":{icon:"✅",color:"#58D68D"},
+  "Common mistake":{icon:"⚠️",color:"#E67E22"},
+  "Takeaway":{icon:"🎯",color:"#BB8FCE"},
+};
+
 function renderInlineBold(line,T){
   const parts=line.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part,i)=>{
@@ -5334,15 +5345,27 @@ function renderInlineBold(line,T){
 
 function AiTutorFormattedText({text,T}){
   const lines=text.split("\n").filter(l=>l.trim().length>0);
+  let currentSection=null;
   return(
     <div style={{fontSize:13,color:T.text}}>
       {lines.map((line,i)=>{
         const trimmed=line.trim();
         const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
         if(isHeader){
+          const label=trimmed.slice(2,-2);
+          currentSection=label;
+          const style=AI_TUTOR_SECTION_STYLE[label]||{icon:"▸",color:T.gold};
           return(
-            <div key={i} style={{marginTop:i===0?0:14,marginBottom:4,fontWeight:700,color:T.gold,fontSize:12,letterSpacing:"0.02em"}}>
-              {trimmed.slice(2,-2)}
+            <div key={i} style={{marginTop:i===0?0:16,marginBottom:6,fontWeight:700,color:style.color,fontSize:12,letterSpacing:"0.02em",display:"flex",alignItems:"center",gap:6}}>
+              <span>{style.icon}</span><span>{label}</span>
+            </div>
+          );
+        }
+        // Formula section gets special prominent treatment
+        if(currentSection==="Formula"){
+          return(
+            <div key={i} style={{textAlign:"center",fontSize:17,fontWeight:700,color:T.gold,padding:"10px 8px",margin:"4px 0 10px",background:`${T.gold}0d`,borderRadius:8,letterSpacing:"0.01em"}}>
+              {line}
             </div>
           );
         }

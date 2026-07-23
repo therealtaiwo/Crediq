@@ -2354,20 +2354,24 @@ function ConfirmQuit({onConfirm,onCancel,answered,total,T}) {
 }
 
 // ─── PREMIUM GATE ─────────────────────────────────────────────────────────────
-function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T}) {
+function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T,reason}) {
   const today=new Date().toDateString();
   const usedToday=user?.lastActiveDate===today?(user?.questionsToday||0):0;
+  const isStuck=reason==="ai_tutor_stuck";
   return (
     <div className="modal-overlay" style={{position:"fixed",inset:0,zIndex:200,display:"flex",alignItems:"flex-end"}}>
       <div className="slide-up spring-in" style={{width:"100%",background:"#0f2218",borderRadius:"20px 20px 0 0",padding:"28px 22px 40px",border:"1px solid rgba(184,151,62,0.25)",borderBottom:"none",boxShadow:"0 -8px 40px rgba(0,0,0,0.6)"}}>
         <button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"none",border:"none",cursor:"pointer",color:"rgba(247,243,236,0.3)",padding:8}}><X size={18}/></button>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.5)",letterSpacing:"0.18em",marginBottom:10}}>{usedToday>0?`YOU PRACTICED ${usedToday} QUESTIONS TODAY`:"UNLOCK UNLIMITED PRACTICE"}</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",lineHeight:1.1}}>Go unlimited.</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:400,color:"rgba(247,243,236,0.5)",fontStyle:"italic",marginTop:6,lineHeight:1.5}}>Every serious JUPEB student<br/>practices 100+ questions daily.</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.5)",letterSpacing:"0.18em",marginBottom:10}}>{isStuck?"RIGHT WHEN YOU NEED IT MOST":usedToday>0?`YOU PRACTICED ${usedToday} QUESTIONS TODAY`:"UNLOCK UNLIMITED PRACTICE"}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",lineHeight:1.1}}>{isStuck?"Never stay stuck.":"Go unlimited."}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:400,color:"rgba(247,243,236,0.5)",fontStyle:"italic",marginTop:6,lineHeight:1.5}}>{isStuck?<>You just tried to ask. That instinct is<br/>exactly what gets students unstuck fast.</>:<>Every serious JUPEB student<br/>practices 100+ questions daily.</>}</div>
         </div>
         <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.18)",borderRadius:12,padding:"16px 18px",marginBottom:16}}>
-          {["Unlimited questions every day until August","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Topic drills (001–004) for every weakness","Full score intelligence — see exactly why your grade is where it is"].map((f,i)=>(
+          {(isStuck
+            ?["Unlimited AI Tutor explanations — any question, any time it clicks","Unlimited questions every day until August","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Full score intelligence — see exactly why your grade is where it is"]
+            :["Unlimited AI Tutor explanations when you get stuck","Unlimited questions every day until August","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Topic drills (001–004) for every weakness"]
+          ).map((f,i)=>(
             <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<4?10:0}}>
               <CheckCircle size={14} color="#4ade80" strokeWidth={2}/>
               <span style={{fontSize:13,color:"#F7F3EC",lineHeight:1.4}}>{f}</span>
@@ -2378,8 +2382,8 @@ function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T}) {
           <div style={{fontFamily:"'Playfair Display',serif",fontSize:36,fontWeight:900,color:"#B8973E",lineHeight:1}}>₦2,500</div>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(247,243,236,0.4)",letterSpacing:"0.1em",marginTop:4}}>ONE-TIME · VALID UNTIL EXAM DAY</div>
         </div>
-        <button className="btn-press" onClick={()=>{track("payment_started",{uid:user?.uid});onUpgrade&&onUpgrade();}} style={{width:"100%",padding:"16px 0",border:"none",borderRadius:10,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 8px 32px rgba(0,75,59,0.45)",marginBottom:10}}>
-          Pay ₦2,500 — Unlock Everything
+        <button className="btn-press" onClick={()=>{track("payment_started",{uid:user?.uid,reason:reason||"generic"});onUpgrade&&onUpgrade();}} style={{width:"100%",padding:"16px 0",border:"none",borderRadius:10,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 8px 32px rgba(0,75,59,0.45)",marginBottom:10}}>
+          {isStuck?"Pay ₦2,500 — Unlock AI Tutor":"Pay ₦2,500 — Unlock Everything"}
         </button>
         <button onClick={onGoToWhyPremium} style={{width:"100%",padding:"10px 0",border:"none",background:"transparent",color:"rgba(184,151,62,0.6)",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer",letterSpacing:"0.08em"}}>
           WHY PREMIUM? SEE FULL BREAKDOWN →
@@ -2390,7 +2394,7 @@ function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T}) {
           </button>
         )}
         <button onClick={onClose} style={{width:"100%",padding:"10px 0",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,background:"transparent",color:"rgba(247,243,236,0.25)",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer",letterSpacing:"0.08em",marginTop:6}}>
-          CONTINUE TOMORROW (RESETS AT MIDNIGHT)
+          {isStuck?"MAYBE LATER":"CONTINUE TOMORROW (RESETS AT MIDNIGHT)"}
         </button>
       </div>
     </div>
@@ -2455,7 +2459,7 @@ function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfi
     {key:"dashboard",icon:<Home size={20}/>,label:"My Plan"},
     {key:"setup",    icon:<Play size={20}/>,label:"CBT Practice"},
     {key:"drill",    icon:<Target size={20}/>,label:"Fix Score Blockers",premium:true},
-    {key:"tutor",    icon:<GraduationCap size={20}/>,label:"AI Tutor",premium:true},
+    {key:"tutor",    icon:<GraduationCap size={20}/>,label:"AI Tutor"},
     {key:"analytics",icon:<BarChart2 size={20}/>,label:"JUPEB Report"},
   ];
   return (
@@ -4196,7 +4200,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           </div>
           <motion.button whileTap={{scale:0.97}} onClick={()=>onNav("tutor")}
             style={{width:"100%",marginTop:16,padding:"13px 0",border:"none",borderRadius:26,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 24px rgba(0,75,59,0.4)"}}>
-            {user?.isPremium?"Ask AI Tutor →":"Unlock AI Tutor →"}
+            Ask AI Tutor →
           </motion.button>
         </motion.div>
 
@@ -5531,7 +5535,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return null;
 
   const handleTap=async()=>{
-    if(!user?.isPremium){onUpgrade&&onUpgrade();return;}
+    if(!user?.isPremium){onUpgrade&&onUpgrade("ai_tutor_stuck");return;}
     setState("loading");
     const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
     if(result.text){setExplanation(result.text);setState("shown");}
@@ -5559,7 +5563,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
       style={{marginTop:12,width:"100%",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${T.gold}`,
         background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
         letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
-      {state==="loading"?"Thinking…":user?.isPremium?"Help me understand this better":"✨ Sometimes one explanation isn't enough — unlock AI Tutor"}
+      {state==="loading"?"Thinking…":"Help me understand this better"}
     </button>
   );
 }
@@ -10965,8 +10969,8 @@ export default function App() {
   };
 
   const handleNav=s=>{
-    // Gate drill and AI Tutor behind premium
-    if((s==="drill"||s==="tutor")&&!user?.isPremium){setShowPremiumGate(true);return;}
+    // Gate drill behind premium — AI Tutor is free to enter, paywall triggers at the "explain" moment instead
+    if(s==="drill"&&!user?.isPremium){setShowPremiumGate(true);return;}
     if(s==="editprofile"){setScreen("editprofile");return;}
     // Lazy load questions when Practice or Drill is tapped
     if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){
@@ -10991,7 +10995,7 @@ export default function App() {
       {user&&isMain&&<PWABanner T={T}/>}
       <div id="paystack-container" style={{position:"fixed",zIndex:99999,top:0,left:0,width:"100%",height:"100%",pointerEvents:"none"}}/>
 
-      {showPremiumGate&&user&&<PremiumGate user={user} onClose={()=>setShowPremiumGate(false)} onGoToWhyPremium={()=>{setShowPremiumGate(false);setScreen("whypremium");}} onUpgrade={handleUpgradeToPremium} onRestore={()=>handleManualVerify(localStorage.getItem("cq_pending_ref"))} T={T}/>}
+      {showPremiumGate&&user&&<PremiumGate user={user} reason={showPremiumGate} onClose={()=>setShowPremiumGate(false)} onGoToWhyPremium={()=>{setShowPremiumGate(false);setScreen("whypremium");}} onUpgrade={handleUpgradeToPremium} onRestore={()=>handleManualVerify(localStorage.getItem("cq_pending_ref"))} T={T}/>}
 
       {/* ── ONBOARD COMPLETE TRANSITION ── */}
       {onboardComplete&&(
@@ -11034,7 +11038,7 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
-          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

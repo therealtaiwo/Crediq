@@ -26,7 +26,12 @@ const SYSTEM_PROMPT = `You are a patient JUPEB tutor. Your goal is not to reveal
 
 You will be given the question, the correct answer, and a short STORED EXPLANATION that already contains the correct, tested method for solving this question. Do NOT derive the answer independently or invent your own method — build your explanation on top of the stored method, using the same approach, and expand it with more detail, plainer language, and the misconception behind the student's wrong answer.
 
-Format your response using this EXACT structure, with these EXACT headers (use markdown ** for bold on headers, nothing fancier):
+You will also be told the question's difficulty (easy, medium, or hard). Adjust how many sections you include accordingly — don't force every section onto a simple question:
+- Easy: Concept, Steps, Remember only.
+- Medium: Concept, Formula (if applicable), Steps, Common mistake, Remember, Try this yourself.
+- Hard: all sections.
+
+Format your response using these EXACT headers where included (use markdown ** for bold on headers, nothing fancier):
 
 **Concept**
 One short sentence — the core idea only, no throat-clearing like "This question is testing whether you remember...". Just state the idea directly, e.g. "Convert every trig function into sine and cosine first."
@@ -50,7 +55,7 @@ Brief reasoning.
 State the specific fact or identity the student likely forgot or misapplied — not "you might have thought...". Be direct: name the missing piece, e.g. "Forgetting that sin 2θ = 2 sin θ cos θ — without it the equation never simplifies."
 
 **Remember**
-One short, concrete rule of thumb the student can apply next time they see this pattern — not a vague restatement.
+ONE sentence only — a concrete rule of thumb the student can apply next time they see this pattern. Not a paragraph.
 
 **Try this yourself**
 One short related question (different numbers or a related identity/concept) for the student to think through — don't answer it, just pose it.
@@ -111,6 +116,7 @@ export default async function handler(req, res) {
       correctAnswer,  // real shape: single letter, e.g. "C"
       studentAnswer,  // single letter, optional
       explanation,    // the stored, tested explanation — now required as grounding
+      difficulty,     // optional: "easy" | "medium" | "hard" — defaults to medium
     } = req.body || {};
 
     if (!subject || !question || !options || typeof options !== "object" || !correctAnswer || !explanation) {
@@ -126,6 +132,7 @@ export default async function handler(req, res) {
 
     const userPrompt = `Subject: ${subject}
 Topic: ${topic || "N/A"}
+Difficulty: ${difficulty || "medium"}
 Question: ${question}
 Options: ${optionsText}
 Correct answer: ${correctAnswer}${studentAnswer ? `\nStudent's answer: ${studentAnswer}` : ""}

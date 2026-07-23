@@ -5300,7 +5300,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
       body:JSON.stringify({
         subject:question.subject,topic:question.topic,question:question.question,
         options:question.options,correctAnswer:question.correctAnswer,studentAnswer,
-        explanation:question.explanation
+        explanation:question.explanation,difficulty:question.difficulty
       })
     });
   }catch(err){return{blocked:"network-error"};}

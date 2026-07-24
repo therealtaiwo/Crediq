@@ -5489,13 +5489,27 @@ function renderInlineBold(line,T){
 
 function AiTutorFormattedText({text,T}){
   const[showAnswer,setShowAnswer]=useState(false);
+  const[speaking,setSpeaking]=useState(false);
   const lines=text.split("\n").filter(l=>l.trim().length>0);
   let currentSection=null;
+  let formulaLineShown=false;
 
   const speak=()=>{
     if(!window.speechSynthesis)return;
+    if(speaking){window.speechSynthesis.cancel();setSpeaking(false);return;}
     window.speechSynthesis.cancel();
     let plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
+    // Disambiguate implicit-multiplication variable pairs BEFORE symbol
+    // conversion, so they're not misread as real words (e.g. "ma" as
+    // "mother" instead of "m times a"). Word-boundary matched so real
+    // words like "mass"/"matter"/"format" are untouched. Deliberately
+    // skips "at" — too common a real preposition to safely rewrite.
+    plain=plain
+      .replace(/\bma\b/g," m times a ")
+      .replace(/\bmg\b/g," m times g ")
+      .replace(/\bmv\b/g," m times v ")
+      .replace(/\but\b/g," u times t ")
+      .replace(/\bPV\b/g," P times V ");
     // Speak math symbols as words instead of reading them literally
     plain=plain
       .replace(/²/g," squared ")
@@ -5517,6 +5531,9 @@ function AiTutorFormattedText({text,T}){
       .replace(/\s{2,}/g," ");
     const u=new SpeechSynthesisUtterance(plain);
     u.rate=0.95;
+    u.onstart=()=>setSpeaking(true);
+    u.onend=()=>setSpeaking(false);
+    u.onerror=()=>setSpeaking(false);
     window.speechSynthesis.speak(u);
   };
 
@@ -5524,8 +5541,9 @@ function AiTutorFormattedText({text,T}){
 
   return(
     <div style={{fontSize:13,color:T.text}}>
-      <button onClick={speak} style={{marginBottom:10,background:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"5px 10px",color:T.gold,fontSize:10,cursor:"pointer"}}>
-        🔊 Listen
+      <button onClick={speak} style={{marginBottom:10,background:speaking?`${T.gold}1a`:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"5px 10px",color:T.gold,fontSize:10,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
+        <span style={{display:"inline-block",animation:speaking?"timerPulse 0.9s ease-in-out infinite":"none"}}>{speaking?"⏸":"🔊"}</span>
+        {speaking?"Playing… (tap to stop)":"Listen"}
       </button>
       {lines.map((line,i)=>{
         const trimmed=line.trim();
@@ -5533,6 +5551,7 @@ function AiTutorFormattedText({text,T}){
         if(isHeader){
           const label=trimmed.slice(2,-2);
           currentSection=label;
+          formulaLineShown=false;
           if(label==="Answer")return null; // rendered separately below, hidden until tapped
           const style=AI_TUTOR_SECTION_STYLE[label]||{icon:"▸",color:T.gold};
           return(
@@ -5542,8 +5561,11 @@ function AiTutorFormattedText({text,T}){
           );
         }
         if(currentSection==="Answer")return null; // handled by answerBlock below
-        // Formula section gets special prominent treatment
-        if(currentSection==="Formula"){
+        // Formula section: only the equation itself (first line) gets the
+        // prominent box — a glossary line defining symbols right after it
+        // (e.g. "where F = force, m = mass") reads as normal prose.
+        if(currentSection==="Formula"&&!formulaLineShown){
+          formulaLineShown=true;
           return(
             <div key={i} style={{textAlign:"center",fontSize:17,fontWeight:700,color:T.gold,padding:"10px 8px",margin:"4px 0 10px",background:`${T.gold}0d`,borderRadius:8,letterSpacing:"0.01em"}}>
               {line}

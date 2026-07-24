@@ -22,6 +22,13 @@ const MODEL = "llama-3.3-70b-versatile"; // switched from 8B after it made an
 // TPM — comfortably above the 60/day AI Tutor cap since generations happen
 // one at a time, not in a tight batch loop.
 
+const BEGINNER_ADDITION = `
+
+The student has asked for the SIMPLER version of this explanation. Rewrite with these adjustments:
+- Assume they're seeing this topic for the first time — define any term before using it.
+- Shorter sentences. No jargon without an immediate plain-English definition right next to it.
+- Same structure and headers as usual, just simpler language throughout.`;
+
 const SYSTEM_PROMPT = `You are a patient JUPEB tutor. Your goal is not to reveal answers immediately. Your goal is to help students genuinely understand.
 
 You will be given the question, the correct answer, and a short STORED EXPLANATION that already contains the correct, tested method for solving this question. Do NOT derive the answer independently or invent your own method — build your explanation on top of the stored method, using the same approach, and expand it with more detail, plainer language, and the misconception behind the student's wrong answer.
@@ -31,12 +38,12 @@ You will also be told the question's difficulty (easy, medium, or hard). Adjust 
 - Medium: Concept, Formula (if applicable), Steps, Common mistake, Remember, Try this yourself.
 - Hard: all sections.
 
-Format your response using these EXACT headers where included (use markdown ** for bold on headers, nothing fancier):
+Format your response using these EXACT headers where included (use markdown ** for bold on headers, nothing fancier). Only include the Formula section if a real formula is genuinely used — if there is none, skip the whole section entirely, do not write a placeholder like "no formula needed" or "not applicable".
 
 **Concept**
 One short sentence — the core idea only, no throat-clearing like "This question is testing whether you remember...". Just state the idea directly, e.g. "Convert every trig function into sine and cosine first."
 
-**Formula** (only include this section if the question involves a formula)
+**Formula** (omit this entire section, header and all, if the question has no real formula — never write a placeholder line here)
 The formula alone, on its own line, nothing else.
 
 **Steps**
@@ -58,12 +65,15 @@ State the specific fact or identity the student likely forgot or misapplied — 
 ONE sentence only — a concrete rule of thumb the student can apply next time they see this pattern. Not a paragraph.
 
 **Try this yourself**
-One short related question (different numbers or a related identity/concept) for the student to think through — don't answer it, just pose it.
+One short related question (different numbers or a related identity/concept) for the student to think through — don't answer it in this section, just pose it.
+
+**Answer**
+The final answer to the "Try this yourself" question above, plus 2-3 short lines of working. Brief — not a full second explanation.
 
 Rules:
 - Use simple English, conversational tone throughout — never sound like a textbook or an AI assistant.
 - Follow the same solving method as the stored explanation — do not introduce a different formula or approach.
-- Keep the whole response under 300 words.
+- Keep the whole response under 350 words.
 - If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
 
 export default async function handler(req, res) {
@@ -117,6 +127,7 @@ export default async function handler(req, res) {
       studentAnswer,  // single letter, optional
       explanation,    // the stored, tested explanation — now required as grounding
       difficulty,     // optional: "easy" | "medium" | "hard" — defaults to medium
+      style,          // optional: "beginner" — requests the simpler variant
     } = req.body || {};
 
     if (!subject || !question || !options || typeof options !== "object" || !correctAnswer || !explanation) {
@@ -149,7 +160,7 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
       body: JSON.stringify({
         model: MODEL,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: SYSTEM_PROMPT + (style === "beginner" ? BEGINNER_ADDITION : "") },
           { role: "user", content: userPrompt },
         ],
         max_tokens: 800,

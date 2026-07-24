@@ -5419,13 +5419,14 @@ const AI_TUTOR_DAILY_CAP=60;
 const AI_TUTOR_EXCLUDED_TOPICS=["Genetics"];
 const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 
-async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
+async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return{blocked:"excluded-topic"};
   if(!user?.isPremium)return{blocked:"not-premium"};
 
+  const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
   const qRef=doc(db,"questions",questionId);
   const qSnap=await getDoc(qRef);
-  const cached=qSnap.data()?.aiTutorExplanation;
+  const cached=qSnap.data()?.[cacheField];
   if(cached)return{text:cached,cached:true};
 
   const counterRef=doc(db,"aiTutorCounters",aiTutorTodayKey());
@@ -5442,7 +5443,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
       body:JSON.stringify({
         subject:question.subject,topic:question.topic,question:question.question,
         options:question.options,correctAnswer:question.correctAnswer,studentAnswer,
-        explanation:question.explanation,difficulty:question.difficulty
+        explanation:question.explanation,difficulty:question.difficulty,style
       })
     });
   }catch(err){return{blocked:"network-error"};}
@@ -5454,7 +5455,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer}){
   if(!data.text)return{blocked:"generation-failed"};
 
   try{
-    await updateDoc(qRef,{aiTutorExplanation:data.text,aiTutorGeneratedAt:new Date().toISOString()});
+    await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString()});
     await setDoc(counterRef,{count:increment(1)},{merge:true});
   }catch(err){console.error("Failed to cache AI Tutor result:",err);}
 
@@ -5487,16 +5488,33 @@ function renderInlineBold(line,T){
 }
 
 function AiTutorFormattedText({text,T}){
+  const[showAnswer,setShowAnswer]=useState(false);
   const lines=text.split("\n").filter(l=>l.trim().length>0);
   let currentSection=null;
+
+  const speak=()=>{
+    if(!window.speechSynthesis)return;
+    window.speechSynthesis.cancel();
+    const plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
+    const u=new SpeechSynthesisUtterance(plain);
+    u.rate=0.95;
+    window.speechSynthesis.speak(u);
+  };
+
+  const answerBlock=text.includes("**Answer**")?text.split("**Answer**")[1].trim():null;
+
   return(
     <div style={{fontSize:13,color:T.text}}>
+      <button onClick={speak} style={{marginBottom:10,background:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"5px 10px",color:T.gold,fontSize:10,cursor:"pointer"}}>
+        🔊 Listen
+      </button>
       {lines.map((line,i)=>{
         const trimmed=line.trim();
         const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
         if(isHeader){
           const label=trimmed.slice(2,-2);
           currentSection=label;
+          if(label==="Answer")return null; // rendered separately below, hidden until tapped
           const style=AI_TUTOR_SECTION_STYLE[label]||{icon:"▸",color:T.gold};
           return(
             <div key={i} style={{marginTop:i===0?0:16,marginBottom:6,fontWeight:700,color:style.color,fontSize:12,letterSpacing:"0.02em",display:"flex",alignItems:"center",gap:6}}>
@@ -5504,6 +5522,7 @@ function AiTutorFormattedText({text,T}){
             </div>
           );
         }
+        if(currentSection==="Answer")return null; // handled by answerBlock below
         // Formula section gets special prominent treatment
         if(currentSection==="Formula"){
           return(
@@ -5518,6 +5537,21 @@ function AiTutorFormattedText({text,T}){
           </div>
         );
       })}
+      {answerBlock&&(
+        <div style={{marginTop:10}}>
+          {!showAnswer?(
+            <button onClick={()=>setShowAnswer(true)} style={{background:"none",border:`1px solid ${T.gold}`,borderRadius:8,padding:"8px 14px",color:T.gold,fontSize:11,fontWeight:700,cursor:"pointer"}}>
+              Show answer & working
+            </button>
+          ):(
+            <div style={{padding:12,borderRadius:8,background:T.surface,border:`1px solid ${T.gold}33`,fontSize:12.5,lineHeight:1.5}}>
+              {answerBlock.split("\n").filter(l=>l.trim()).map((l,i)=>(
+                <div key={i} style={{marginBottom:3}}>{renderInlineBold(l,T)}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -5525,6 +5559,9 @@ function AiTutorFormattedText({text,T}){
 function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[state,setState]=useState("idle");
   const[explanation,setExplanation]=useState(null);
+  const[beginnerExplanation,setBeginnerExplanation]=useState(null);
+  const[viewMode,setViewMode]=useState("standard"); // "standard" | "beginner"
+  const[beginnerLoading,setBeginnerLoading]=useState(false);
   const[blockedReason,setBlockedReason]=useState(null);
 
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return null;
@@ -5537,11 +5574,32 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
     else{setBlockedReason(result.blocked);setState("blocked");}
   };
 
+  const handleSimpler=async()=>{
+    if(beginnerExplanation){setViewMode("beginner");return;} // already fetched, free toggle
+    setBeginnerLoading(true);
+    const result=await getAiTutorExplanation({user,question,questionId,studentAnswer,style:"beginner"});
+    setBeginnerLoading(false);
+    if(result.text){setBeginnerExplanation(result.text);setViewMode("beginner");}
+    // silent fail — student still has the standard explanation on screen
+  };
+
   if(state==="shown"){
+    const shownText=viewMode==="beginner"&&beginnerExplanation?beginnerExplanation:explanation;
     return(
       <div style={{marginTop:12,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.gold}33`}}>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",marginBottom:10,color:T.gold}}>AI TUTOR</div>
-        <AiTutorFormattedText text={explanation} T={T}/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.gold}}>AI TUTOR</div>
+          {viewMode==="standard"?(
+            <button onClick={handleSimpler} disabled={beginnerLoading} style={{background:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"4px 9px",color:T.gold,fontSize:9.5,cursor:"pointer"}}>
+              {beginnerLoading?"…":"Explain it simpler"}
+            </button>
+          ):(
+            <button onClick={()=>setViewMode("standard")} style={{background:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"4px 9px",color:T.gold,fontSize:9.5,cursor:"pointer"}}>
+              ← Standard version
+            </button>
+          )}
+        </div>
+        <AiTutorFormattedText text={shownText} T={T}/>
       </div>
     );
   }

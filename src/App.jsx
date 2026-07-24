@@ -5495,7 +5495,26 @@ function AiTutorFormattedText({text,T}){
   const speak=()=>{
     if(!window.speechSynthesis)return;
     window.speechSynthesis.cancel();
-    const plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
+    let plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
+    // Speak math symbols as words instead of reading them literally
+    plain=plain
+      .replace(/²/g," squared ")
+      .replace(/³/g," cubed ")
+      .replace(/√/g," square root of ")
+      .replace(/±/g," plus or minus ")
+      .replace(/≈/g," approximately equals ")
+      .replace(/≠/g," does not equal ")
+      .replace(/≤/g," less than or equal to ")
+      .replace(/≥/g," greater than or equal to ")
+      .replace(/×/g," times ")
+      .replace(/÷/g," divided by ")
+      .replace(/π/g," pi ")
+      .replace(/θ/g," theta ")
+      .replace(/Δ/g," delta ")
+      .replace(/°/g," degrees ")
+      .replace(/=/g," equals ")
+      .replace(/\//g," over ")
+      .replace(/\s{2,}/g," ");
     const u=new SpeechSynthesisUtterance(plain);
     u.rate=0.95;
     window.speechSynthesis.speak(u);

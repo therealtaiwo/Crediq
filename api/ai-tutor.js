@@ -44,7 +44,7 @@ Format your response using these EXACT headers where included (use markdown ** f
 One short sentence — the core idea only, no throat-clearing like "This question is testing whether you remember...". Just state the idea directly, e.g. "Convert every trig function into sine and cosine first."
 
 **Formula** (omit this entire section, header and all, if the question has no real formula — never write a placeholder line here)
-The formula alone, on its own line, nothing else.
+The formula alone, on its own line, nothing else. Immediately below it, on its own line, define every symbol used: "where F = force, m = mass, a = acceleration" — plain words, no units unless the units themselves matter to the method. Skip this definition line only for symbols so standard they need no explanation (e.g. plain x, y in coordinate geometry).
 
 **Steps**
 Break into short, separate lines — one idea per line, not one long sentence. For example:

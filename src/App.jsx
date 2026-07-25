@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Home, Play, Target, BarChart2, Shuffle, Flame, Sun, Moon, LogOut,
@@ -5487,9 +5487,79 @@ function renderInlineBold(line,T){
   });
 }
 
+// ── LaTeX rendering (KaTeX loaded from CDN — no npm install needed) ───────
+let katexLoadPromise=null;
+function ensureKatexLoaded(){
+  if(typeof window==="undefined")return Promise.resolve(false);
+  if(window.katex)return Promise.resolve(true);
+  if(katexLoadPromise)return katexLoadPromise;
+  katexLoadPromise=new Promise(resolve=>{
+    if(!document.getElementById("katex-cdn-css")){
+      const link=document.createElement("link");
+      link.id="katex-cdn-css";
+      link.rel="stylesheet";
+      link.href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css";
+      document.head.appendChild(link);
+    }
+    if(document.getElementById("katex-cdn-js")){
+      const check=setInterval(()=>{if(window.katex){clearInterval(check);resolve(true);}},50);
+      return;
+    }
+    const script=document.createElement("script");
+    script.id="katex-cdn-js";
+    script.src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js";
+    script.onload=()=>resolve(true);
+    script.onerror=()=>resolve(false);
+    document.head.appendChild(script);
+  });
+  return katexLoadPromise;
+}
+function useKatexReady(){
+  const[ready,setReady]=useState(typeof window!=="undefined"&&!!window.katex);
+  useEffect(()=>{
+    if(ready)return;
+    let mounted=true;
+    ensureKatexLoaded().then(ok=>{if(mounted)setReady(ok);});
+    return()=>{mounted=false;};
+  },[ready]);
+  return ready;
+}
+function katexHTML(latex,displayMode){
+  try{
+    if(window.katex)return window.katex.renderToString(latex,{throwOnError:false,displayMode});
+  }catch(e){/* fall through to plain-text fallback below */}
+  return null;
+}
+function MathInline({latex}){
+  const html=katexHTML(latex,false);
+  if(html)return <span dangerouslySetInnerHTML={{__html:html}}/>;
+  return <span style={{fontStyle:"italic"}}>{latex}</span>; // shows while KaTeX is still loading
+}
+function MathBlock({latex}){
+  const html=katexHTML(latex,true);
+  if(html)return <div dangerouslySetInnerHTML={{__html:html}}/>;
+  return <div style={{fontStyle:"italic",textAlign:"center"}}>{latex}</div>;
+}
+// Splits a line on $$block$$ / $inline$ math delimiters, rendering each
+// math segment with real KaTeX typesetting and everything else through the
+// existing bold-text renderer, so **bold** and $math$ can coexist on one line.
+function renderMathText(line,T){
+  const parts=line.split(/(\$\$[^$]+\$\$|\$[^$]+\$)/g);
+  return parts.map((part,i)=>{
+    if(part.startsWith("$$")&&part.endsWith("$$")&&part.length>3){
+      return <MathBlock key={i} latex={part.slice(2,-2)}/>;
+    }
+    if(part.startsWith("$")&&part.endsWith("$")&&part.length>1){
+      return <MathInline key={i} latex={part.slice(1,-1)}/>;
+    }
+    return <Fragment key={i}>{renderInlineBold(part,T)}</Fragment>;
+  });
+}
+
 function AiTutorFormattedText({text,T}){
   const[showAnswer,setShowAnswer]=useState(false);
   const[speaking,setSpeaking]=useState(false);
+  useKatexReady(); // kicks off KaTeX CDN load on mount; re-renders once ready
   const lines=text.split("\n").filter(l=>l.trim().length>0);
   let currentSection=null;
   let formulaLineShown=false;
@@ -5499,18 +5569,64 @@ function AiTutorFormattedText({text,T}){
     if(speaking){window.speechSynthesis.cancel();setSpeaking(false);return;}
     window.speechSynthesis.cancel();
     let plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
-    // Disambiguate implicit-multiplication variable pairs BEFORE symbol
-    // conversion, so they're not misread as real words (e.g. "ma" as
-    // "mother" instead of "m times a"). Word-boundary matched so real
-    // words like "mass"/"matter"/"format" are untouched. Deliberately
-    // skips "at" — too common a real preposition to safely rewrite.
+    // ── LaTeX → spoken English (runs before anything else, since it needs
+    // the braces/backslashes intact to know structure) ──────────────────
+    // Fractions: \frac{a}{b} → "a over b". Run twice to catch one level
+    // of nesting (a fraction inside a fraction).
+    for(let pass=0;pass<2;pass++){
+      plain=plain.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g," $1 over $2 ");
+    }
+    // Powers: ^{2}/^2 → "squared", ^{3}/^3 → "cubed", else "to the power of N"
+    const powerWord=n=>n==="2"?" squared ":n==="3"?" cubed ":` to the power of ${n} `;
+    plain=plain
+      .replace(/\^\{([^{}]+)\}/g,(_,n)=>powerWord(n))
+      .replace(/\^([a-zA-Z0-9])/g,(_,n)=>powerWord(n));
+    // Subscripts: _{i}/_i → "sub i"
+    plain=plain
+      .replace(/_\{([^{}]+)\}/g," sub $1 ")
+      .replace(/_([a-zA-Z0-9])/g," sub $1 ");
+    // Roots and common LaTeX commands
+    plain=plain
+      .replace(/\\sqrt\{([^{}]+)\}/g," square root of $1 ")
+      .replace(/\\left|\\right/g,"")
+      .replace(/\\times/g," times ")
+      .replace(/\\div/g," divided by ")
+      .replace(/\\pm/g," plus or minus ")
+      .replace(/\\approx/g," approximately equals ")
+      .replace(/\\neq/g," does not equal ")
+      .replace(/\\leq/g," less than or equal to ")
+      .replace(/\\geq/g," greater than or equal to ")
+      .replace(/\\sin/g," sine ")
+      .replace(/\\cos/g," cosine ")
+      .replace(/\\tan/g," tangent ")
+      .replace(/\\theta/g," theta ")
+      .replace(/\\lambda/g," lambda ")
+      .replace(/\\mu/g," mu ")
+      .replace(/\\omega/g," omega ")
+      .replace(/\\alpha/g," alpha ")
+      .replace(/\\beta/g," beta ")
+      .replace(/\\gamma/g," gamma ")
+      .replace(/\\Delta/g," delta ")
+      .replace(/\\pi/g," pi ")
+      // Catch-all for any LaTeX command missed above — drop the backslash,
+      // keep the word, so it reads as something rather than nothing
+      .replace(/\\([a-zA-Z]+)/g,"$1")
+      // Strip math delimiters and any leftover braces
+      .replace(/\$\$|\$/g,"")
+      .replace(/[{}]/g," ");
+    // Disambiguate implicit-multiplication variable pairs that slipped
+    // through outside LaTeX (e.g. "ma" as "mother" instead of "m times a").
+    // Word-boundary matched so real words like "mass"/"matter"/"format"
+    // are untouched. Deliberately skips "at" — too common a real
+    // preposition to safely rewrite.
     plain=plain
       .replace(/\bma\b/g," m times a ")
       .replace(/\bmg\b/g," m times g ")
       .replace(/\bmv\b/g," m times v ")
       .replace(/\but\b/g," u times t ")
       .replace(/\bPV\b/g," P times V ");
-    // Speak math symbols as words instead of reading them literally
+    // Speak any remaining Unicode math symbols as words instead of reading
+    // them literally (defense in depth, in case LaTeX wasn't used)
     plain=plain
       .replace(/²/g," squared ")
       .replace(/³/g," cubed ")
@@ -5566,15 +5682,16 @@ function AiTutorFormattedText({text,T}){
         // (e.g. "where F = force, m = mass") reads as normal prose.
         if(currentSection==="Formula"&&!formulaLineShown){
           formulaLineShown=true;
+          const clean=trimmed.startsWith("$$")&&trimmed.endsWith("$$")?trimmed.slice(2,-2):trimmed;
           return(
-            <div key={i} style={{textAlign:"center",fontSize:17,fontWeight:700,color:T.gold,padding:"10px 8px",margin:"4px 0 10px",background:`${T.gold}0d`,borderRadius:8,letterSpacing:"0.01em"}}>
-              {line}
+            <div key={i} style={{textAlign:"center",fontSize:17,fontWeight:700,color:T.gold,padding:"10px 8px",margin:"4px 0 10px",background:`${T.gold}0d`,borderRadius:8,letterSpacing:"0.01em",overflowX:"auto"}}>
+              <MathBlock latex={clean}/>
             </div>
           );
         }
         return(
           <div key={i} style={{lineHeight:1.55,marginBottom:4}}>
-            {renderInlineBold(line,T)}
+            {renderMathText(line,T)}
           </div>
         );
       })}
@@ -5587,7 +5704,7 @@ function AiTutorFormattedText({text,T}){
           ):(
             <div style={{padding:12,borderRadius:8,background:T.surface,border:`1px solid ${T.gold}33`,fontSize:12.5,lineHeight:1.5}}>
               {answerBlock.split("\n").filter(l=>l.trim()).map((l,i)=>(
-                <div key={i} style={{marginBottom:3}}>{renderInlineBold(l,T)}</div>
+                <div key={i} style={{marginBottom:3}}>{renderMathText(l,T)}</div>
               ))}
             </div>
           )}

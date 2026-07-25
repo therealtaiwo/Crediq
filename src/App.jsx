@@ -5429,7 +5429,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const cached=qSnap.data()?.[cacheField];
   if(cached)return{text:cached,cached:true};
 
-  const counterRef=doc(db,"aiTutorCounters",aiTutorTodayKey());
+  const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
   const counterSnap=await getDoc(counterRef);
   const count=counterSnap.exists()?(counterSnap.data().count||0):0;
   if(count>=AI_TUTOR_DAILY_CAP)return{blocked:"daily-cap-reached"};

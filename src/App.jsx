@@ -2363,16 +2363,16 @@ function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T,reason
       <div className="slide-up spring-in" style={{width:"100%",background:"#0f2218",borderRadius:"20px 20px 0 0",padding:"28px 22px 40px",border:"1px solid rgba(184,151,62,0.25)",borderBottom:"none",boxShadow:"0 -8px 40px rgba(0,0,0,0.6)"}}>
         <button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"none",border:"none",cursor:"pointer",color:"rgba(247,243,236,0.3)",padding:8}}><X size={18}/></button>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.5)",letterSpacing:"0.18em",marginBottom:10}}>{isStuck?"RIGHT WHEN YOU NEED IT MOST":usedToday>0?`YOU PRACTICED ${usedToday} QUESTIONS TODAY`:"UNLOCK UNLIMITED PRACTICE"}</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",lineHeight:1.1}}>{isStuck?"Never stay stuck.":"Go unlimited."}</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:400,color:"rgba(247,243,236,0.5)",fontStyle:"italic",marginTop:6,lineHeight:1.5}}>{isStuck?<>You just tried to ask. That instinct is<br/>exactly what gets students unstuck fast.</>:<>Every serious JUPEB student<br/>practices 100+ questions daily.</>}</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.5)",letterSpacing:"0.18em",marginBottom:10}}>{isStuck?"YOU'VE USED YOUR 3 FREE EXPLANATIONS TODAY":usedToday>0?`YOU PRACTICED ${usedToday} QUESTIONS TODAY`:"UNLOCK UNLIMITED PRACTICE"}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",lineHeight:1.1}}>{isStuck?"Don't lose your study flow.":"Go unlimited."}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:400,color:"rgba(247,243,236,0.5)",fontStyle:"italic",marginTop:6,lineHeight:1.5}}>{isStuck?<>You're building momentum —<br/>keep going with unlimited AI tutoring.</>:<>Every serious JUPEB student<br/>practices 100+ questions daily.</>}</div>
         </div>
         <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.18)",borderRadius:12,padding:"16px 18px",marginBottom:16}}>
           {(isStuck
-            ?["Unlimited AI Tutor explanations — any question, any time it clicks","Unlimited questions every day until August","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Full score intelligence — see exactly why your grade is where it is"]
+            ?["Understand difficult topics faster","Ask follow-up questions anytime","Learn the way that works for YOU"]
             :["Unlimited AI Tutor explanations when you get stuck","Unlimited questions every day until August","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Topic drills (001–004) for every weakness"]
-          ).map((f,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<4?10:0}}>
+          ).map((f,i,arr)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<arr.length-1?10:0}}>
               <CheckCircle size={14} color="#4ade80" strokeWidth={2}/>
               <span style={{fontSize:13,color:"#F7F3EC",lineHeight:1.4}}>{f}</span>
             </div>
@@ -2383,7 +2383,7 @@ function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T,reason
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(247,243,236,0.4)",letterSpacing:"0.1em",marginTop:4}}>ONE-TIME · VALID UNTIL EXAM DAY</div>
         </div>
         <button className="btn-press" onClick={()=>{track("payment_started",{uid:user?.uid,reason:reason||"generic"});onUpgrade&&onUpgrade();}} style={{width:"100%",padding:"16px 0",border:"none",borderRadius:10,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 8px 32px rgba(0,75,59,0.45)",marginBottom:10}}>
-          {isStuck?"Pay ₦2,500 — Unlock AI Tutor":"Pay ₦2,500 — Unlock Everything"}
+          {isStuck?"Continue Learning →":"Pay ₦2,500 — Unlock Everything"}
         </button>
         <button onClick={onGoToWhyPremium} style={{width:"100%",padding:"10px 0",border:"none",background:"transparent",color:"rgba(184,151,62,0.6)",fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer",letterSpacing:"0.08em"}}>
           WHY PREMIUM? SEE FULL BREAKDOWN →
@@ -5412,6 +5412,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
 // ─── DRILL SCREEN ─────────────────────────────────────────────────────────────
 // ─── AI TUTOR ─────────────────────────────────────────────────────────────────
 const AI_TUTOR_DAILY_CAP=60;
+const AI_TUTOR_FREE_DAILY_CAP=3; // free users get this many real tries/day before the paywall
 // "Genetics" is the only topic tag that could contain cross/probability-style
 // questions (confirmed against the real topic list) — Llama 3.1 8B was tested
 // and found unreliable specifically on that question type. Whole topic
@@ -5421,7 +5422,6 @@ const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 
 async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return{blocked:"excluded-topic"};
-  if(!user?.isPremium)return{blocked:"not-premium"};
 
   const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
   const qRef=doc(db,"questions",questionId);
@@ -5429,10 +5429,17 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const cached=qSnap.data()?.[cacheField];
   if(cached)return{text:cached,cached:true};
 
+  // Client-side pre-check: fast, avoids an unnecessary network round-trip
+  // when we already know locally the user is over their cap. This is NOT
+  // the real security boundary — ai-tutor.js enforces the same cap
+  // server-side against the same counter doc, since a free user has no
+  // reason not to bypass a client-only check.
+  const cap=user?.isPremium?AI_TUTOR_DAILY_CAP:AI_TUTOR_FREE_DAILY_CAP;
   const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
   const counterSnap=await getDoc(counterRef);
   const count=counterSnap.exists()?(counterSnap.data().count||0):0;
-  if(count>=AI_TUTOR_DAILY_CAP)return{blocked:"daily-cap-reached"};
+  if(count>=cap)return{blocked:"daily-cap-reached"};
+  const isLastFreeUse=!user?.isPremium&&count===AI_TUTOR_FREE_DAILY_CAP-1;
 
   let res;
   try{
@@ -5443,7 +5450,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
       body:JSON.stringify({
         subject:question.subject,topic:question.topic,question:question.question,
         options:question.options,correctAnswer:question.correctAnswer,studentAnswer,
-        explanation:question.explanation,difficulty:question.difficulty,style
+        explanation:question.explanation,difficulty:question.difficulty,style,isLastFreeUse
       })
     });
   }catch(err){return{blocked:"network-error"};}
@@ -5714,6 +5721,14 @@ function AiTutorFormattedText({text,T}){
   );
 }
 
+const AI_TUTOR_DELIGHT_LINES=[
+  "Nice question.",
+  "Most students actually get this wrong.",
+  "You're improving.",
+  "Good instinct asking about this one.",
+  "This one trips up a lot of people on exam day.",
+];
+
 function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[state,setState]=useState("idle");
   const[explanation,setExplanation]=useState(null);
@@ -5721,14 +5736,26 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[viewMode,setViewMode]=useState("standard"); // "standard" | "beginner"
   const[beginnerLoading,setBeginnerLoading]=useState(false);
   const[blockedReason,setBlockedReason]=useState(null);
+  const[delightLine,setDelightLine]=useState(null);
 
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return null;
 
   const handleTap=async()=>{
-    if(!user?.isPremium){onUpgrade&&onUpgrade("ai_tutor_stuck");return;}
     setState("loading");
     const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
-    if(result.text){setExplanation(result.text);setState("shown");}
+    if(result.text){
+      setExplanation(result.text);
+      setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
+      setState("shown");
+    }
+    else if(result.blocked==="daily-cap-reached"&&!user?.isPremium){
+      // Let them feel it was actually working before revealing the wall —
+      // don't block before they've even pressed the button. A believable
+      // "thinking" pause, then the explanation is framed as ready and
+      // waiting, not denied.
+      await new Promise(r=>setTimeout(r,1400));
+      setState("paywall-tease");
+    }
     else{setBlockedReason(result.blocked);setState("blocked");}
   };
 
@@ -5757,7 +5784,24 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
             </button>
           )}
         </div>
+        {delightLine&&<div style={{fontSize:11,color:T.gold,fontStyle:"italic",marginBottom:8,opacity:0.85}}>{delightLine}</div>}
         <AiTutorFormattedText text={shownText} T={T}/>
+      </div>
+    );
+  }
+
+  if(state==="paywall-tease"){
+    return(
+      <div style={{marginTop:12,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.gold}33`,textAlign:"center"}}>
+        <div style={{fontSize:13,color:T.text,lineHeight:1.5,marginBottom:12}}>
+          You're so close. This explanation is ready.
+        </div>
+        <button onClick={()=>onUpgrade&&onUpgrade("ai_tutor_stuck")} className="btn-press"
+          style={{width:"100%",padding:"12px 16px",borderRadius:10,border:"none",
+            background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",
+            color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+          Unlock your AI Tutor →
+        </button>
       </div>
     );
   }

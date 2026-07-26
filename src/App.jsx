@@ -5796,6 +5796,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
         </div>
         {delightLine&&<div style={{fontSize:11,color:T.gold,fontStyle:"italic",marginBottom:8,opacity:0.85}}>{delightLine}</div>}
         <AiTutorFormattedText text={shownText} T={T}/>
+        <CopyToNotesButton user={user} content={shownText} subject={question.subject} topic={question.topic} T={T}/>
       </div>
     );
   }
@@ -5829,6 +5830,44 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
         background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
         letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
       {state==="loading"?"Thinking…":"Help me understand this better"}
+    </button>
+  );
+}
+
+// ─── COPY TO NOTES ────────────────────────────────────────────────────────────
+// Appends one entry to the student's single notes doc via arrayUnion — no read
+// needed first, so this stays a single cheap write regardless of how many
+// notes already exist.
+async function saveNoteEntry(uid,entry){
+  await setDoc(doc(db,"notes",uid),{
+    entries:arrayUnion(entry),
+    updatedAt:serverTimestamp(),
+  },{merge:true});
+}
+
+function CopyToNotesButton({user,content,subject,topic,T}){
+  const[state,setState]=useState("idle"); // idle | saving | saved
+  const handleCopy=async()=>{
+    if(!user?.uid||state!=="idle")return;
+    setState("saving");
+    try{
+      await saveNoteEntry(user.uid,{
+        type:"pasted",
+        content,
+        subject:subject||"",
+        topic:topic||"",
+        savedAt:Date.now(),
+      });
+      setState("saved");
+      track("copied_to_notes",{uid:user.uid,subject,topic});
+    }catch(e){console.error("Copy to notes failed:",e);setState("idle");}
+  };
+  return(
+    <button onClick={handleCopy} disabled={state!=="idle"} className="btn-press"
+      style={{marginTop:10,background:"none",border:`1px solid ${T.gold}44`,borderRadius:8,
+        padding:"6px 11px",color:state==="saved"?"#4ade80":T.gold,fontSize:10.5,
+        display:"flex",alignItems:"center",gap:5,cursor:state==="idle"?"pointer":"default"}}>
+      {state==="saved"?<><CheckCircle size={12}/> Saved to Notes</>:<><Copy size={12}/> {state==="saving"?"Saving…":"Copy to Notes"}</>}
     </button>
   );
 }
@@ -6104,13 +6143,15 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
 }
 
 // ─── TUTOR SCREEN — learn while answering, immediate per-question reveal ──────
-function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
+function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
   const userSubjects=user.subjects||[];
   const[selSub,setSelSub]=useState(userSubjects[0]||"");
   const[session,setSession]=useState(null); // array of questions once started
   const[idx,setIdx]=useState(0);
   const[selectedOpt,setSelectedOpt]=useState(null);
   const[revealed,setRevealed]=useState(false);
+  const[showReport,setShowReport]=useState(false);
+  const[showCalc,setShowCalc]=useState(false);
   const qbLoaded=Object.keys(QB).length>0;
 
   const startSession=()=>{
@@ -6141,7 +6182,10 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
               <div style={{width:1,height:14,background:"rgba(255,255,255,0.1)"}}/>
               <Logo size={17} onDark={true}/>
             </div>
-            <ThemeBtn dark={dark} setDark={setDark} T={T}/>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <ThemeBtn dark={dark} setDark={setDark} T={T}/>
+              <button className="btn-press" onClick={onNotes} title="My Notes" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><BookOpen size={17}/></button>
+            </div>
           </div>
           <div style={{marginTop:14}}>
             <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>AI Tutor</div>
@@ -6186,10 +6230,17 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
 
   return(
     <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
+      {showReport&&<ReportModal question={q} user={user} onClose={()=>setShowReport(false)} onSubmit={data=>track("question_reported",{uid:user?.uid,...data})} T={T}/>}
+      <AnimatePresence>{showCalc&&<ScientificCalc T={T} onClose={()=>setShowCalc(false)}/>}</AnimatePresence>
       <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <button className="btn-press" onClick={()=>setSession(null)} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Exit</button>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.5)"}}>{idx+1} / {session.length}</span>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.5)"}}>{idx+1} / {session.length}</span>
+            <button className="btn-press" onClick={()=>setShowCalc(true)} title="Calculator" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4,fontSize:15,lineHeight:1}}>🧮</button>
+            <button className="btn-press" onClick={()=>setShowReport(true)} style={{background:"none",border:"none",color:"rgba(247,243,236,0.2)",cursor:"pointer",padding:4}}><Flag size={14}/></button>
+            <button className="btn-press" onClick={onNotes} title="My Notes" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><BookOpen size={16}/></button>
+          </div>
         </div>
       </div>
 
@@ -6234,6 +6285,100 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
               {idx+1>=session.length?"Finish Session":"Next Question →"}
             </BtnPrimary>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── NOTES SCREEN ─────────────────────────────────────────────────────────────
+// Single Firestore doc per user (notes/{uid}), one array field. Debounced
+// autosave a couple seconds after the last edit — never per-keystroke, and
+// never one write per note, so cost stays flat regardless of how many notes
+// a student accumulates.
+function NotesScreen({user,onBack,T}) {
+  const[entries,setEntries]=useState(null); // null = still loading
+  const[saveState,setSaveState]=useState("idle"); // idle | pending | saved
+  const saveTimer=useRef(null);
+  const skipNextSave=useRef(true); // don't fire a save from the initial load
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const snap=await getDoc(doc(db,"notes",user.uid));
+        if(cancelled)return;
+        setEntries(snap.exists()?(snap.data().entries||[]):[]);
+      }catch(e){console.error("Failed to load notes:",e);if(!cancelled)setEntries([]);}
+    })();
+    return()=>{cancelled=true;};
+  },[user.uid]);
+
+  useEffect(()=>{
+    if(entries===null)return;
+    if(skipNextSave.current){skipNextSave.current=false;return;}
+    setSaveState("pending");
+    if(saveTimer.current)clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(async()=>{
+      try{
+        await setDoc(doc(db,"notes",user.uid),{entries,updatedAt:serverTimestamp()},{merge:true});
+        setSaveState("saved");
+        setTimeout(()=>setSaveState(s=>s==="saved"?"idle":s),1500);
+      }catch(e){console.error("Failed to save notes:",e);setSaveState("idle");}
+    },2500);
+    return()=>{if(saveTimer.current)clearTimeout(saveTimer.current);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[entries]);
+
+  const addTextEntry=()=>setEntries(e=>[...(e||[]),{type:"text",content:"",createdAt:Date.now()}]);
+  const updateEntry=(idx,content)=>setEntries(e=>e.map((en,i)=>i===idx?{...en,content}:en));
+  const deleteEntry=(idx)=>setEntries(e=>e.filter((_,i)=>i!==idx));
+
+  return(
+    <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
+      <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.06em"}}>
+            {saveState==="pending"?"SAVING…":saveState==="saved"?"SAVED":""}
+          </span>
+        </div>
+        <div style={{marginTop:14}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>My Notes</div>
+        </div>
+      </div>
+
+      <div style={{padding:18,maxWidth:700,margin:"0 auto",width:"100%"}}>
+        {entries===null?(
+          <div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11}}>Loading notes…</div>
+        ):entries.length===0?(
+          <div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11,lineHeight:1.6}}>No notes yet.<br/>Add one below, or tap "Copy to Notes" on any AI Tutor explanation.</div>
+        ):(
+          entries.map((entry,idx)=>(
+            <div key={idx} style={{marginBottom:14,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`}}>
+              {entry.type==="pasted"?(
+                <>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.08em"}}>{(entry.subject||"").toUpperCase()}{entry.topic?` · ${entry.topic}`:""}</span>
+                    <button onClick={()=>deleteEntry(idx)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:2}}><X size={13}/></button>
+                  </div>
+                  <AiTutorFormattedText text={entry.content} T={T}/>
+                </>
+              ):(
+                <>
+                  <div style={{display:"flex",justifyContent:"flex-end",marginBottom:4}}>
+                    <button onClick={()=>deleteEntry(idx)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:2}}><X size={13}/></button>
+                  </div>
+                  <textarea value={entry.content} onChange={e=>updateEntry(idx,e.target.value)} placeholder="Type your note…" rows={4}
+                    style={{width:"100%",background:"none",border:"none",outline:"none",color:T.text,fontSize:14,lineHeight:1.5,resize:"vertical",fontFamily:"inherit"}}/>
+                </>
+              )}
+            </div>
+          ))
+        )}
+
+        {entries!==null&&(
+          <button onClick={addTextEntry} className="btn-press" style={{width:"100%",padding:"12px 0",borderRadius:10,border:`1.5px dashed ${T.border}`,background:"none",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>+ Add note</button>
         )}
       </div>
     </div>
@@ -10330,6 +10475,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
+            {icon:<BookOpen size={18} color={T.gold}/>,label:"My Notes",sub:"Everything you've saved, in one place",action:()=>onNav("notes"),accent:T.gold},
             {icon:<Brain size={18} color={T.gold}/>,label:"Intelligence Report",sub:"Your full readiness score, breakdown & next actions",action:()=>onNav("intelligence"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
@@ -11303,7 +11449,8 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
-          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
+          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} onNotes={()=>setScreen("notes")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
+          {screen==="notes"&&user&&<NotesScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

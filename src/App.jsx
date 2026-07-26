@@ -428,6 +428,16 @@ function jupebGrade(accuracy) {
   if(accuracy>=40)return{grade:"E",points:1,label:"E (1 pt)", color:"#ef4444"};
   return{grade:"F",points:0,label:"F (0 pts)",color:"#ef4444"};
 }
+// Accuracy from only the student's most recent sessions for a subject, not
+// their full lifetime history — so a real, sustained improvement (e.g. a
+// recent run of A's after weeks of C's) actually moves the grade instead of
+// being permanently diluted by old scores with equal weight forever.
+const RECENT_SESSIONS_WINDOW=10;
+function recentSubjectAccuracy(subjectHistory) {
+  const sorted=[...subjectHistory].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const recent=sorted.slice(0,RECENT_SESSIONS_WINDOW);
+  return Math.round(recent.reduce((s,x)=>s+x.pct,0)/recent.length);
+}
 // Calculates total JUPEB points from an array of per-subject accuracy %
 function projectedPoints(subjectAccuracies) {
   if(!subjectAccuracies||subjectAccuracies.length===0)return{total:0,breakdown:[],bonus:false};
@@ -1164,7 +1174,7 @@ function getNextExam(userSubjects) {
 function calcMastery(history, subject) {
   const relevant = history.filter(h=>h.subject===subject);
   if (!relevant.length) return 0;
-  const avg = relevant.reduce((s,h)=>s+h.pct,0)/relevant.length;
+  const avg = recentSubjectAccuracy(relevant);
   return Math.min(95, Math.round(avg*0.85 + Math.min(relevant.length*2,15)));
 }
 
@@ -1795,7 +1805,7 @@ const updateReadiness = async (uid,allHistory,subjects=[]) => {
   const subjectScores={};
   subjects.forEach(sub=>{
     const h=allHistory.filter(x=>x.subject===sub);
-    if(h.length)subjectScores[sub]=Math.round(h.reduce((s,x)=>s+x.pct,0)/h.length);
+    if(h.length)subjectScores[sub]=recentSubjectAccuracy(h);
   });
   const recent=allHistory.slice(-10);
   const overallScore=recent.length?Math.round(recent.reduce((s,h)=>s+h.pct,0)/recent.length):0;
@@ -3727,7 +3737,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
     const subAccuracies=userSubjects.map(sub=>{
       const h=history.filter(x=>x.subject===sub);
       if(!h.length)return{subject:sub,accuracy:null,hasData:false};
-      const acc=Math.round(h.reduce((s,x)=>s+x.pct,0)/h.length);
+      const acc=recentSubjectAccuracy(h);
       return{subject:sub,accuracy:acc,hasData:true};
     });
     const withData=subAccuracies.filter(x=>x.hasData);
@@ -3763,7 +3773,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
     for(const sub of userSubjects){
       const subH=history.filter(h=>h.subject===sub);
       if(!subH.length)continue;
-      const subAvg=Math.round(subH.reduce((s,x)=>s+x.pct,0)/subH.length);
+      const subAvg=recentSubjectAccuracy(subH);
       const gradeGap=Math.max(0,60-subAvg);
       // University boost: preferred subjects get 1.35x weight in mission scoring
       const isPreferred=preferredSubs.length>0&&preferredSubs.some(p=>sub.toLowerCase().includes(p.toLowerCase().split(" ")[0])||p.toLowerCase().includes(sub.toLowerCase().split(" ")[0]));
@@ -3808,7 +3818,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
   // ── SUBJECT ROWS — per-subject grade data for home screen rows ────────────
   const subjectRows=useMemo(()=>userSubjects.map(sub=>{
     const h=history.filter(x=>x.subject===sub);
-    const avg=h.length?Math.round(h.reduce((s,x)=>s+x.pct,0)/h.length):null;
+    const avg=h.length?recentSubjectAccuracy(h):null;
     const gradeData=avg!==null?jupebGrade(avg):null;
     return{subject:sub,avg,gradeData,sessions:h.length};
   }),[history,userSubjects]);
@@ -4055,7 +4065,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
     for(const sub of userSubjects){
       const subH=history.filter(h=>h.subject===sub);
       if(!subH.length)continue;
-      const subAvg=Math.round(subH.reduce((s,x)=>s+x.pct,0)/subH.length);
+      const subAvg=recentSubjectAccuracy(subH);
       const gradeGap=Math.max(0,60-subAvg);
       const isPreferred=preferredSubs.length>0&&preferredSubs.some(p=>sub.toLowerCase().includes(p.toLowerCase().split(" ")[0])||p.toLowerCase().includes(sub.toLowerCase().split(" ")[0]));
       const uniBoost=isPreferred?1.35:1;

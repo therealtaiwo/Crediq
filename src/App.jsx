@@ -5386,7 +5386,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
       <div className="question-enter" key={current} style={{flex:1,padding:"20px 18px",paddingBottom:130+navOffset}}>
         <div style={{maxWidth:960,margin:"0 auto",width:"100%"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          {q.topic&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,letterSpacing:"0.12em",flex:1,marginRight:8}}>{q.topic.toUpperCase()}</div>}
+          {q.topic&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,letterSpacing:"0.12em",flex:1,marginRight:8}}>{subject==="mixed"&&q.subject?`${q.subject.toUpperCase()} · `:""}{q.topic.toUpperCase()}</div>}
           <button className="btn-press" onClick={()=>setShowNav(!showNav)} style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>{answeredCount}/{totalQ} answered</button>
         </div>
         <div style={{fontSize:15,color:T.text,lineHeight:1.65,marginBottom:22,fontWeight:500,fontFamily:"'Playfair Display','Noto Sans Math',serif",whiteSpace:"pre-wrap"}}>{q.question}</div>
@@ -6049,7 +6049,7 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
               })}
               <BtnPrimary onClick={()=>{
                 const q=getQuestionsForDrill(QB,userSubjects,weakTopics,10);
-                startDrill(q,"All Score Blockers",userSubjects[0]);
+                startDrill(q,"All Score Blockers","mixed");
               }} T={T}>Fix All Score Blockers — 10 Questions →</BtnPrimary>
             </>
           )

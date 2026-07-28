@@ -5754,16 +5754,9 @@ function AiTutorFormattedText({text,T}){
       </button>
       {lines.map((line,i)=>{
         const trimmed=line.trim();
-        // Headers are meant to arrive as **Bold** on their own line, but a
-        // prompt drift (or older cached content generated before this was
-        // standardized) can produce markdown ## headings instead — those
-        // used to fall through as uncolored plain text. Recognize both forms.
-        const boldMatch=/^\*\*([^*]+)\*\*$/.exec(trimmed);
-        const hashMatch=/^#{1,6}\s*\*{0,2}([^*#]+?)\*{0,2}\s*$/.exec(trimmed);
-        const headerLabel=boldMatch?boldMatch[1]:hashMatch?hashMatch[1].trim():null;
-        const isHeader=headerLabel!==null;
+        const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
         if(isHeader){
-          const label=headerLabel;
+          const label=trimmed.slice(2,-2);
           currentSection=label;
           formulaLineShown=false;
           if(label==="Answer")return null; // rendered separately below, hidden until tapped
@@ -6328,6 +6321,67 @@ const REFERENCE_BANK={
       {name:"Binomial theorem",formula:"$$(a+b)^{n} = \\sum_{k=0}^{n} \\binom{n}{k}a^{n-k}b^{k}$$"},
       {name:"Quadratic formula",formula:"$$x = \\frac{-b \\pm \\sqrt{b^{2}-4ac}}{2a}$$"},
     ]},
+    {category:"Indices & Logarithms",items:[
+      {name:"Product law (indices)",formula:"$$a^{m}\\times a^{n} = a^{m+n}$$"},
+      {name:"Quotient law (indices)",formula:"$$\\frac{a^{m}}{a^{n}} = a^{m-n}$$"},
+      {name:"Power law (indices)",formula:"$$(a^{m})^{n} = a^{mn}$$"},
+      {name:"Negative index",formula:"$$a^{-n} = \\frac{1}{a^{n}}$$"},
+      {name:"Fractional index",formula:"$$a^{\\frac{1}{n}} = \\sqrt[n]{a}$$"},
+      {name:"Product law (logs)",formula:"$$\\log(mn) = \\log m + \\log n$$"},
+      {name:"Quotient law (logs)",formula:"$$\\log\\left(\\frac{m}{n}\\right) = \\log m - \\log n$$"},
+      {name:"Power law (logs)",formula:"$$\\log(m^{n}) = n\\log m$$"},
+      {name:"Change of base",formula:"$$\\log_{a} b = \\frac{\\log b}{\\log a}$$"},
+    ]},
+    {category:"Complex Numbers",items:[
+      {name:"Modulus",formula:"$$|z| = \\sqrt{a^{2}+b^{2}}, \\ z=a+bi$$"},
+      {name:"Argument",formula:"$$\\arg(z) = \\tan^{-1}\\left(\\frac{b}{a}\\right)$$"},
+      {name:"Polar form",formula:"$$z = r(\\cos\\theta + i\\sin\\theta)$$"},
+      {name:"De Moivre's theorem",formula:"$$z^{n} = r^{n}(\\cos n\\theta + i\\sin n\\theta)$$"},
+      {name:"Conjugate",formula:"$$\\bar{z} = a - bi$$"},
+    ]},
+    {category:"Coordinate Geometry",items:[
+      {name:"Distance between two points",formula:"$$d = \\sqrt{(x_2-x_1)^{2}+(y_2-y_1)^{2}}$$"},
+      {name:"Midpoint",formula:"$$M = \\left(\\frac{x_1+x_2}{2}, \\frac{y_1+y_2}{2}\\right)$$"},
+      {name:"Gradient",formula:"$$m = \\frac{y_2-y_1}{x_2-x_1}$$"},
+      {name:"Equation of a line",formula:"$$y - y_1 = m(x - x_1)$$"},
+      {name:"Equation of a circle",formula:"$$(x-a)^{2}+(y-b)^{2}=r^{2}$$"},
+      {name:"Parallel lines",formula:"$$m_1 = m_2$$"},
+      {name:"Perpendicular lines",formula:"$$m_1 \\times m_2 = -1$$"},
+    ]},
+    {category:"Vectors",items:[
+      {name:"Magnitude of a vector",formula:"$$|\\vec{r}| = \\sqrt{x^{2}+y^{2}+z^{2}}$$"},
+      {name:"Dot product",formula:"$$\\vec{a}\\cdot\\vec{b} = |\\vec{a}||\\vec{b}|\\cos\\theta$$"},
+      {name:"Cross product magnitude",formula:"$$|\\vec{a}\\times\\vec{b}| = |\\vec{a}||\\vec{b}|\\sin\\theta$$"},
+      {name:"Unit vector",formula:"$$\\hat{a} = \\frac{\\vec{a}}{|\\vec{a}|}$$"},
+    ]},
+    {category:"Kinematics & Mechanics",items:[
+      {name:"Velocity",formula:"$$v = u + at$$"},
+      {name:"Displacement",formula:"$$s = ut + \\frac{1}{2}at^{2}$$"},
+      {name:"v² equation",formula:"$$v^{2} = u^{2}+2as$$"},
+      {name:"Relative velocity",formula:"$$\\vec{v}_{AB} = \\vec{v}_A - \\vec{v}_B$$"},
+    ]},
+    {category:"Statics & Moments",items:[
+      {name:"Moment of a force",formula:"$$M = F \\times d$$"},
+      {name:"Principle of moments",formula:"$$\\text{sum of clockwise moments} = \\text{sum of anticlockwise moments}$$"},
+      {name:"Moment of inertia (point mass)",formula:"$$I = mr^{2}$$"},
+      {name:"Radius of gyration",formula:"$$k = \\sqrt{\\frac{I}{m}}$$"},
+    ]},
+    {category:"Statistics — Measures",items:[
+      {name:"Mean",formula:"$$\\bar{x} = \\frac{\\sum x}{n}$$"},
+      {name:"Mean (frequency data)",formula:"$$\\bar{x} = \\frac{\\sum fx}{\\sum f}$$"},
+      {name:"Variance",formula:"$$\\sigma^{2} = \\frac{\\sum(x-\\bar{x})^{2}}{n}$$"},
+      {name:"Standard deviation",formula:"$$\\sigma = \\sqrt{\\frac{\\sum(x-\\bar{x})^{2}}{n}}$$"},
+      {name:"Median (grouped data)",formula:"$$Median = L + \\left(\\frac{\\frac{n}{2}-CF}{f}\\right)h$$"},
+    ]},
+    {category:"Statistics — Probability & Distributions",items:[
+      {name:"Combination",formula:"$$^{n}C_r = \\frac{n!}{r!(n-r)!}$$"},
+      {name:"Permutation",formula:"$$^{n}P_r = \\frac{n!}{(n-r)!}$$"},
+      {name:"Binomial probability",formula:"$$P(X=r) = \\,^{n}C_r\\, p^{r}q^{n-r}$$"},
+      {name:"Binomial mean",formula:"$$E(X) = np$$"},
+      {name:"Binomial variance",formula:"$$Var(X) = npq$$"},
+      {name:"Standardized normal variable",formula:"$$z = \\frac{x-\\mu}{\\sigma}$$"},
+      {name:"Correlation coefficient",formula:"$$r = \\frac{\\sum(x-\\bar{x})(y-\\bar{y})}{\\sqrt{\\sum(x-\\bar{x})^{2}\\sum(y-\\bar{y})^{2}}}$$"},
+    ]},
   ],
   Physics:[
     {category:"Constants",items:[
@@ -6362,6 +6416,60 @@ const REFERENCE_BANK={
       {name:"Photon energy",formula:"$$E = hf$$"},
       {name:"Photon momentum",formula:"$$p = \\frac{h}{\\lambda}$$"},
     ]},
+    {category:"Elasticity & Fluids",items:[
+      {name:"Hooke's law",formula:"$$F = ke$$"},
+      {name:"Young's modulus",formula:"$$E = \\frac{F/A}{e/l}$$"},
+      {name:"Elastic potential energy",formula:"$$E_p = \\frac{1}{2}ke^{2}$$"},
+      {name:"Pressure in a fluid",formula:"$$P = h\\rho g$$"},
+      {name:"Upthrust (Archimedes' principle)",formula:"$$U = \\rho V g$$"},
+      {name:"Bernoulli's equation",formula:"$$P + \\frac{1}{2}\\rho v^{2} + \\rho g h = \\text{constant}$$"},
+      {name:"Terminal velocity (Stokes' law)",formula:"$$v = \\frac{2r^{2}(\\rho - \\sigma)g}{9\\eta}$$"},
+    ]},
+    {category:"SHM & Circular Motion",items:[
+      {name:"Angular velocity",formula:"$$\\omega = \\frac{2\\pi}{T} = 2\\pi f$$"},
+      {name:"Centripetal acceleration",formula:"$$a = \\frac{v^{2}}{r} = \\omega^{2}r$$"},
+      {name:"Centripetal force",formula:"$$F = \\frac{mv^{2}}{r}$$"},
+      {name:"SHM acceleration",formula:"$$a = -\\omega^{2}x$$"},
+      {name:"SHM period (mass–spring)",formula:"$$T = 2\\pi\\sqrt{\\frac{m}{k}}$$"},
+      {name:"SHM period (simple pendulum)",formula:"$$T = 2\\pi\\sqrt{\\frac{l}{g}}$$"},
+    ]},
+    {category:"Heat & Thermodynamics",items:[
+      {name:"Boyle's law",formula:"$$P_1V_1 = P_2V_2$$"},
+      {name:"Charles's law",formula:"$$\\frac{V_1}{T_1} = \\frac{V_2}{T_2}$$"},
+      {name:"Pressure law",formula:"$$\\frac{P_1}{T_1} = \\frac{P_2}{T_2}$$"},
+      {name:"Ideal gas equation",formula:"$$PV = nRT$$"},
+      {name:"Heat capacity",formula:"$$Q = mc\\Delta\\theta$$"},
+      {name:"Latent heat",formula:"$$Q = mL$$"},
+      {name:"Linear expansion",formula:"$$l = l_0(1+\\alpha\\Delta\\theta)$$"},
+    ]},
+    {category:"Optics",items:[
+      {name:"Refractive index",formula:"$$n = \\frac{\\sin i}{\\sin r}$$"},
+      {name:"Critical angle",formula:"$$\\sin C = \\frac{1}{n}$$"},
+      {name:"Mirror / lens formula",formula:"$$\\frac{1}{f} = \\frac{1}{u}+\\frac{1}{v}$$"},
+      {name:"Linear magnification",formula:"$$m = \\frac{v}{u} = \\frac{h_i}{h_o}$$"},
+      {name:"Power of a lens",formula:"$$P = \\frac{1}{f}$$"},
+    ]},
+    {category:"Circuits — Series & Parallel",items:[
+      {name:"Resistors in series",formula:"$$R = R_1+R_2+R_3$$"},
+      {name:"Resistors in parallel",formula:"$$\\frac{1}{R} = \\frac{1}{R_1}+\\frac{1}{R_2}+\\frac{1}{R_3}$$"},
+      {name:"EMF & internal resistance",formula:"$$\\varepsilon = I(R+r)$$"},
+      {name:"Capacitors in parallel",formula:"$$C = C_1+C_2+C_3$$"},
+      {name:"Capacitors in series",formula:"$$\\frac{1}{C} = \\frac{1}{C_1}+\\frac{1}{C_2}+\\frac{1}{C_3}$$"},
+      {name:"Energy stored in a capacitor",formula:"$$E = \\frac{1}{2}CV^{2}$$"},
+    ]},
+    {category:"Electromagnetism",items:[
+      {name:"Faraday's law (induced EMF)",formula:"$$\\varepsilon = -\\frac{d\\Phi}{dt}$$"},
+      {name:"Magnetic flux",formula:"$$\\Phi = BA$$"},
+      {name:"Force on a current-carrying conductor",formula:"$$F = BIl\\sin\\theta$$"},
+      {name:"Transformer equation",formula:"$$\\frac{V_p}{V_s} = \\frac{N_p}{N_s}$$"},
+    ]},
+    {category:"Modern & Nuclear Physics",items:[
+      {name:"Photoelectric equation",formula:"$$hf = \\phi + KE_{max}$$"},
+      {name:"Mass–energy equivalence",formula:"$$E = mc^{2}$$"},
+      {name:"Radioactive decay law",formula:"$$N = N_0 e^{-\\lambda t}$$"},
+      {name:"Half-life",formula:"$$t_{1/2} = \\frac{0.693}{\\lambda}$$"},
+      {name:"de Broglie wavelength",formula:"$$\\lambda = \\frac{h}{p}$$"},
+    ]},
   ],
   Chemistry:[
     {category:"Constants",items:[
@@ -6384,6 +6492,23 @@ const REFERENCE_BANK={
     {category:"Electrochemistry",items:[
       {name:"Faraday's 1st law",formula:"$$m = \\frac{Q \\times M}{F \\times z}$$"},
       {name:"Cell EMF",formula:"$$E_{cell} = E_{cathode} - E_{anode}$$"},
+    ]},
+    {category:"Organic Chemistry",items:[
+      {name:"Alkanes (general formula)",formula:"$$C_nH_{2n+2}$$"},
+      {name:"Alkenes (general formula)",formula:"$$C_nH_{2n}$$"},
+      {name:"Alkynes (general formula)",formula:"$$C_nH_{2n-2}$$"},
+      {name:"Empirical → molecular formula",formula:"$$n = \\frac{\\text{molecular mass}}{\\text{empirical formula mass}}$$"},
+      {name:"Percentage composition",formula:"$$\\% = \\frac{\\text{mass of element}}{\\text{molar mass of compound}}\\times 100$$"},
+    ]},
+    {category:"Thermochemistry",items:[
+      {name:"Heat energy",formula:"$$Q = mc\\Delta T$$"},
+      {name:"Enthalpy change",formula:"$$\\Delta H = H_{products} - H_{reactants}$$"},
+      {name:"Hess's law",formula:"$$\\Delta H_{reaction} = \\sum \\Delta H_{products} - \\sum \\Delta H_{reactants}$$"},
+    ]},
+    {category:"Quantitative Analysis",items:[
+      {name:"Dilution formula",formula:"$$C_1V_1 = C_2V_2$$"},
+      {name:"Titration at equivalence",formula:"$$\\frac{C_AV_A}{C_BV_B} = \\frac{n_A}{n_B}$$"},
+      {name:"Number of moles",formula:"$$n = \\frac{m}{M} = \\frac{V}{V_m} = cV$$"},
     ]},
   ],
 };

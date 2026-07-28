@@ -7,7 +7,7 @@
 
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore } from "firebase-admin/firestore";
 
 if (!getApps().length) {
   initializeApp({
@@ -16,121 +16,96 @@ if (!getApps().length) {
 }
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const MODEL = "llama-3.3-70b-versatile"; // switched from 8B after it made an
+// independent arithmetic error (1/0.80 miscalculated) even with the correct
+// stored explanation as grounding. 70B free tier: 30 RPM, 1,000 RPD, ~6-12K
+// TPM — comfortably above the 60/day AI Tutor cap since generations happen
+// one at a time, not in a tight batch loop.
 
-// Three-tier fallback chain (see routing decision, July 2026 — revised after
-// a raw-output comparison test across Physics/Chemistry/Math/Biology):
-// 1. Primary — stronger reasoner. Confirmed via testing: no chain-of-thought
-//    leak into `content` (every response started cleanly with **Concept**).
-//    BUT it runs ~15-25% more tokens per call than the old single-model setup
-//    (more LaTeX markup, more verbose steps) — 200K TPD budget realistically
-//    supports ~95-110 calls/day at its real average, not the ~130-150
-//    originally estimated from the old model's token profile. Also needs a
-//    larger max_tokens (see MODEL_CHAIN below) — it got cut off mid-response
-//    in testing at the old 800-token cap on a formula-dense question.
-// 2. Fallback — the previous single model. Already proven: 10/10 clean
-//    results across Physics, Chemistry, Maths, Biology in testing. Kicks in
-//    once the primary's daily RPD/TPD quota is exhausted, OR the primary's
-//    response comes back truncated (finish_reason "length").
-// 3. Emergency fallback — measurably weaker: a real arithmetic error and a
-//    failed Genetics probability question in earlier testing, plus a self-
-//    contradictory practice question and incoherent answer on a Chemistry
-//    question in this round. Its 14,400 RPD headroom is real, but its 6,000
-//    TPM (tokens-per-minute, not per-day) ceiling is tight enough that it
-//    hit a 429 during this test's light, sequential 4-question run — so it
-//    won't smoothly absorb a fast burst even though its daily total is huge.
-//    Included purely as last-resort survival capacity, not normal-operation
-//    traffic.
-// Every other free Groq model (Llama 4 Scout, DeepSeek R1 Distill,
-// Qwen3-32B, Mistral Saba) caps at the same ~1,000 RPD as tiers 1-2, so none
-// of them add real extra capacity as a fourth tier — deliberately excluded.
-const MODEL_CHAIN = [
-  { model: "openai/gpt-oss-120b",       maxTokens: 1100 }, // raised from 800 — was truncating on formula-dense questions
-  { model: "llama-3.3-70b-versatile",   maxTokens: 800  },
-  { model: "llama-3.1-8b-instant",      maxTokens: 800  },
-];
+// Subjects where a direct, procedural, "teacher who's done the math a
+// thousand times" voice fits. Everything else gets the warmer, discursive
+// humanities voice. Keep this list in sync with subject names used elsewhere
+// in the app (App.jsx JUPEB_COURSES keys) — mismatches just fall through to
+// the narrative persona, not an error.
+const QUANT_SUBJECTS = ["Mathematics", "Further Mathematics", "Physics", "Chemistry", "Accounting"];
 
-// The primary model is a reasoning model and could in principle prepend its
-// chain-of-thought before the actual answer, though a raw-output test found
-// no instance of this happening (every response started cleanly with
-// **Concept**). Kept as cheap defensive insurance: anything before the FIRST
-// section header, whatever form a leak might take, isn't part of our format
-// and gets discarded. No-op in the normal case.
-const KNOWN_HEADERS = ["Concept","Formula","Steps","Why this is correct","Common mistake","Remember","Try this yourself","Answer"];
-function stripReasoningPreamble(text) {
-  const pattern = new RegExp(`\\*\\*(${KNOWN_HEADERS.join("|")})\\*\\*`);
-  const match = text.match(pattern);
-  if (match && match.index > 0) return text.slice(match.index);
-  return text;
+function personaFor(subject) {
+  const s = subject || "this subject";
+  if (QUANT_SUBJECTS.includes(s)) {
+    return `You are a ${s} teacher with years of experience teaching JUPEB students. Your voice is calm, direct, and unhurried — the voice of someone who has watched the same handful of mistakes trip up students on this exact topic, year after year, and goes straight at them without ceremony. You don't say "let's break this down" or "first, let's understand" — you just explain. When a formula is genuinely useful, you reach for it like a familiar tool, not a wall of symbols to be afraid of.`;
+  }
+  return `You are a ${s} teacher with years of experience teaching JUPEB students. Your voice is warm and discursive, the way a good humanities or life-sciences teacher talks through an idea — you illustrate with example and context rather than listing dry facts, but you never lose sight of what actually earns marks on this exam.`;
 }
 
-const BEGINNER_ADDITION = `
-
-The student has asked for the SIMPLER version of this explanation. Rewrite with these adjustments:
-- Assume they're seeing this topic for the first time — define any term before using it.
-- Shorter sentences. No jargon without an immediate plain-English definition right next to it.
-- Same structure and headers as usual, just simpler language throughout.`;
-
-const LAST_FREE_HINT_ADDITION = `
-
-This is this student's last free explanation for today. After the Answer section, add ONE extra short line with no header — a natural, trailing-off aside hinting there's more to this topic worth seeing: a shortcut, a related exam trap, an easier way to remember it. Like a teacher who's mid-thought, not a marketer. Never mention payment, limits, upgrading, or that this is their last free one — just genuine warmth that there's more. Example tone: "There's actually a quicker way to spot this pattern in the exam — remind me to show you sometime." Keep it to one sentence.`;
-
-const SYSTEM_PROMPT = `You are a patient JUPEB tutor. Your goal is not to reveal answers immediately. Your goal is to help students genuinely understand.
-
-You will be given the question, the correct answer, and a short STORED EXPLANATION that already contains the correct, tested method for solving this question. Do NOT derive the answer independently or invent your own method — build your explanation on top of the stored method, using the same approach, and expand it with more detail, plainer language, and the misconception behind the student's wrong answer.
-
-You will also be told the question's difficulty (easy, medium, or hard). Adjust how many sections you include accordingly — don't force every section onto a simple question:
-- Easy: Concept, Steps, Remember only.
-- Medium: Concept, Formula (if applicable), Steps, Common mistake, Remember, Try this yourself.
-- Hard: all sections.
-
-Format your response using these EXACT headers where included (use markdown ** for bold on headers, nothing fancier). Only include the Formula section if a real formula is genuinely used — if there is none, skip the whole section entirely, do not write a placeholder like "no formula needed" or "not applicable".
-
-MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so use proper LaTeX for every piece of math, however small. Keep it minimal and plain — no \bigl \bigr \Bigl \Bigr sizing commands, no \displaystyle, no unnecessary \, spacing commands, no double-spaced line breaks after formulas. Plain parentheses and standard spacing render fine and cost fewer tokens:
-- Wrap any standalone formula (the Formula section's equation line) in $$...$$
+const MATH_NOTATION_RULES = `MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so use proper LaTeX for every piece of math, however small:
+- Wrap any standalone formula in $$...$$
 - Wrap any math that appears inline within a sentence — a single variable, a value, a short expression like "n = 5" — in $...$
+- NEVER use \\[...\\] or \\(...\\) as delimiters — only $$...$$ and $...$. This is the one rule that breaks rendering completely if not followed.
 - Fractions: \\frac{a}{b}, never "a/b"
 - Powers: x^{2} (braces required for anything longer than one character, e.g. x^{10})
 - Subscripts: n_{f}, x_{1}
 - Square roots: \\sqrt{x}
 - Greek letters and symbols: \\theta \\lambda \\pi \\mu \\omega \\Delta \\times \\div \\pm \\approx \\leq \\geq \\neq
 - Never use plain-text math shorthand like n_f^2, x^2 without braces, a/b for fractions, or spelled words like "theta" — always the LaTeX command.
-- Regular prose stays outside any $ delimiters — only the math itself goes inside.
+- Regular prose stays outside any $ delimiters — only the math itself goes inside.`;
 
-**Concept**
-One short sentence — the core idea only, no throat-clearing like "This question is testing whether you remember...". Just state the idea directly, e.g. "Convert every trig function into sine and cosine first." Where it genuinely fits, frame it around the exam itself rather than the textbook — e.g. "Here's why almost every JUPEB student loses marks on this exact step" — but only when true and natural, never forced onto a topic it doesn't fit.
+function buildExplainSystemPrompt({ subject, style }) {
+  const persona = personaFor(subject);
+  return `${persona}
 
-**Formula** (omit this entire section, header and all, if the question has no real formula — never write a placeholder line here)
-The formula alone, on its own line, wrapped in $$...$$, nothing else on that line. Immediately below it, on its own line, define every symbol used: "where $F$ = force, $m$ = mass, $a$ = acceleration" — plain words, no units unless the units themselves matter to the method. Skip this definition line only for symbols so standard they need no explanation (e.g. plain x, y in coordinate geometry).
+Your goal is not to reveal answers immediately. Your goal is to help students genuinely understand.
 
-**Steps**
-Break into short, separate lines — one idea per line, not one long sentence. For example:
-Step 1: Identify what's given
-$u = ...$, $v = ...$
-Step 2: Apply the rule
-...
-Step 3: Substitute and calculate
-...
+A student got a JUPEB practice question wrong (or wants more depth on one they got right). You are given the question, the correct answer, and a STORED EXPLANATION that already contains the correct, tested method for solving it. Do NOT derive the answer independently or invent your own method — build on top of the stored method, using the same approach, and expand it with more detail, plainer language, and (if the student picked a wrong option) the specific misconception behind that choice.
 
-**Why this is correct**
-Brief reasoning.
+HOW TO OPEN: start with one or two plain sentences stating the governing law, rule, definition, or principle this question is actually testing — the thing a student should recognise on sight next time they see this pattern. Say it directly, the way you'd say it out loud to a class. No throat-clearing like "this question is testing whether you remember..." — just state the idea.
 
-**Common mistake**
-State the specific fact or identity the student likely forgot or misapplied — not "you might have thought...". Be direct: name the missing piece, e.g. "Forgetting that $\\sin 2\\theta = 2\\sin\\theta\\cos\\theta$ — without it the equation never simplifies."
+HOW TO STRUCTURE THE REST: most of what follows is a toolkit of optional moves — use only the ones that actually help THIS question, in whatever order reads naturally, and do not force every question into the same shape. ONE EXCEPTION IS NOT OPTIONAL: if a real formula is genuinely used to solve the question, the Formula section MUST appear — never fold the equation into the Steps as plain inline text instead, never quietly drop it. And whenever that formula is also a named law, rule, or principle (Hooke's Law, Faraday's Law, Newton's Second Law, Bernoulli's principle, the Pythagorean theorem, Le Chatelier's principle, and so on), you must say the name — students need to recognise the label on exam day, not just the symbols.
 
-**Remember**
-ONE sentence only — a concrete rule of thumb the student can apply next time they see this pattern. If a genuine memory trick or mnemonic exists for this (a phrase, an acronym, a pattern), use that instead of a generic rule — but only a real one, never invent an awkward one just to have one. Not a paragraph either way.
+- **Formula** (mandatory whenever a real formula is genuinely used — only skip this whole section, header and all, if the question truly involves none; never write a placeholder line either way): the equation alone on its own line in $$...$$, its name stated if it has one, and every symbol defined plainly right below it.
+- Worked steps, for calculations — the actual working, one step per line, not one long sentence. Every equation that appears here, even mid-derivation, still follows the same $$...$$ / $...$ rules below — there is no separate "steps" exemption.
+- Why the correct answer is right, in a sentence or two
+- The specific mistake behind the wrong answer, named directly — not "you might have thought...", but e.g. "Forgetting that $\\sin 2\\theta = 2\\sin\\theta\\cos\\theta$ — without it the equation never simplifies."
+- One memorable rule of thumb for next time — a single sentence, not a paragraph
+- A short related question to try, with its answer briefly worked underneath (don't answer it inline, pose it, then give the answer in a clearly separate final part)
 
-**Try this yourself**
-One short related question (different numbers or a related identity/concept) for the student to think through — don't answer it in this section, just pose it.
+A simple factual question with no formula involved might genuinely need only the opening principle and why it's correct — two or three sentences total, nothing more bolted on. A multi-step calculation always keeps its Formula section. Match everything else to what the question actually needs. Never pad length to look thorough, and never cut a genuinely multi-step calculation short to look concise.
+${style === "beginner" ? `
+THE STUDENT FOUND THE STANDARD EXPLANATION HARD TO FOLLOW. This is not a request to reuse simpler words on the same explanation — teach it as if the student is meeting this idea for real the first time. Build from first principles, define every term the moment you use it, and add one concrete, everyday-feeling example if it helps the idea land. It is completely fine — expected, even — for this version to run longer than the standard one. Thoroughness matters more here than brevity. Do not simply shorten or reword the standard explanation; actually re-teach it.
+` : ""}
+${MATH_NOTATION_RULES}
+- This applies EVERYWHERE in your response, not just the Formula section — including multi-line working inside Steps. Never write \\[...\\] or \\(...\\) anywhere, even for a display equation that spans what feels like its own block. Always $$...$$ / $...$, with no exceptions.
 
-**Answer**
-The final answer to the "Try this yourself" question above, plus 2-3 short lines of working. Brief — not a full second explanation.
+Formatting: markdown ** for bold on any header-like label you choose to use, nothing fancier. Simple English, conversational tone throughout — never sound like a textbook or an AI assistant.
 
 Rules:
-- Use simple English, conversational tone throughout — never sound like a textbook or an AI assistant.
 - Follow the same solving method as the stored explanation — do not introduce a different formula or approach.
-- Keep the whole response under 350 words.
 - If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
+}
+
+function buildNotesSystemPrompt({ subject, topic, courseCode, courseName, courseDesc, keywords }) {
+  const persona = personaFor(subject);
+  const scopeLine = courseName
+    ? `This topic sits inside the JUPEB course unit ${courseCode} — "${courseName}" (${courseDesc}). Related syllabus keywords for this unit: ${(keywords || []).join(", ")}. Use this to calibrate exactly how deep to go: cover the topic properly at this unit's level, but do not wander into content that belongs to a different unit or a more advanced course than JUPEB requires.`
+    : `Use your knowledge of the JUPEB syllabus to calibrate how deep to go — cover the topic properly at first-year Nigerian JUPEB depth, not a more advanced course.`;
+
+  return `${persona}
+
+The student wants full study notes on an entire topic — not just one question — thorough enough to substitute for a set of hand-written class notes, at genuine JUPEB exam depth. ${scopeLine}
+
+Structure (adapt freely — this is a guide, not a rigid template):
+- Open with the core idea or governing law/definition of the topic, in plain spoken language.
+- Cover every sub-concept a JUPEB exam question on this topic could reasonably draw on — definitions, laws, formulas (with every symbol defined), processes, or literary/historical detail, whatever the subject demands.
+- EVERY formula you include must be shown as a real display equation in $$...$$ — never described only in prose, never in \\[...\\] or \\(...\\) delimiters. And whenever a formula corresponds to a named law, rule, or theorem (Hooke's Law, Faraday's Law, Newton's Laws, Bernoulli's principle, Le Chatelier's principle, and so on), name it explicitly right next to the formula — that name is very often exactly how a JUPEB question will refer to it, so leaving it out costs the student recognition on exam day.
+- Include at least one worked example or concrete illustration per major sub-concept — not just a defined term sitting on its own.
+- Call out the 2-3 mistakes or misconceptions students most commonly make on this topic.
+- Close with a short, high-density recap a student could reread the night before the exam.
+
+This is meant to be thorough — noticeably longer than a single-question explanation is expected and fine. Don't pad with filler, but don't compress real content just to save space either.
+${QUANT_SUBJECTS.includes(subject) ? `
+${MATH_NOTATION_RULES}
+` : ""}
+Formatting: markdown ** for bold headers, nothing fancier. Simple, spoken English — the voice of a real teacher's own notes, not a textbook or an AI assistant.`;
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -162,32 +137,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const userData = userDoc.exists ? userDoc.data() : null;
-  if (!userData) {
-    res.status(403).json({ error: "Account not found" });
-    return;
-  }
-  const isPremium = userData.isPremium === true;
-
-  // Daily cap — enforced HERE, server-side, not just in the client UI.
-  // A free-tier check that only lived client-side would be trivial for a
-  // free user to bypass by calling this endpoint directly, since they have
-  // nothing at stake the way a paying premium user does. Premium: 60/day
-  // per student. Free: 3/day per student, to let them genuinely try it
-  // before hitting the paywall. Same per-user-per-day counter doc the
-  // client already reads for its own fast pre-check UX.
-  const DAILY_CAP = isPremium ? 60 : 3;
-  const today = new Date().toISOString().slice(0, 10);
-  const counterRef = getFirestore().collection("aiTutorCounters").doc(`${decoded.uid}_${today}`);
-  const counterSnap = await counterRef.get();
-  const usedToday = counterSnap.exists ? (counterSnap.data().count || 0) : 0;
-
-  if (usedToday >= DAILY_CAP) {
-    res.status(403).json({
-      error: isPremium ? "Daily AI Tutor limit reached" : "Free daily limit reached — upgrade for more",
-      dailyCapReached: true,
-      isPremium,
-    });
+  if (!userDoc.exists || userDoc.data()?.isPremium !== true) {
+    res.status(403).json({ error: "Premium required" });
     return;
   }
 
@@ -199,30 +150,51 @@ export default async function handler(req, res) {
 
   try {
     const {
+      mode,           // "explain" (default) | "notes"
       subject,
       topic,
       question,
       options,        // real shape: { A: "...", B: "...", C: "...", D: "..." }
       correctAnswer,  // real shape: single letter, e.g. "C"
       studentAnswer,  // single letter, optional
-      explanation,    // the stored, tested explanation — now required as grounding
-      difficulty,     // optional: "easy" | "medium" | "hard" — defaults to medium
-      style,          // optional: "beginner" — requests the simpler variant
-      isLastFreeUse,  // optional: true when this is a free user's 3rd (final) daily explanation
+      explanation,    // the stored, tested explanation — required as grounding for "explain"
+      difficulty,     // optional: "easy" | "medium" | "hard" — used as context, not a forced template
+      style,          // optional: "beginner" — requests the thorough re-teach variant
+      courseCode,     // notes mode: e.g. "PHY 001"
+      courseName,     // notes mode: e.g. "Mechanics & Properties of Matter"
+      courseDesc,     // notes mode: short desc string
+      keywords,       // notes mode: array of syllabus keywords for this course unit
+      isLastFreeUse,
     } = req.body || {};
 
-    if (!subject || !question || !options || typeof options !== "object" || !correctAnswer || !explanation) {
-      res.status(400).json({
-        error: "Missing required fields: subject, question, options{}, correctAnswer, explanation",
-      });
-      return;
-    }
+    const requestedMode = mode === "notes" ? "notes" : "explain";
 
-    const optionsText = Object.entries(options)
-      .map(([letter, text]) => `${letter}. ${text}`)
-      .join(" | ");
+    let systemPrompt, userPrompt, maxTokens;
 
-    const userPrompt = `Subject: ${subject}
+    if (requestedMode === "notes") {
+      if (!subject || !topic) {
+        res.status(400).json({ error: "Missing required fields for notes: subject, topic" });
+        return;
+      }
+      systemPrompt = buildNotesSystemPrompt({ subject, topic, courseCode, courseName, courseDesc, keywords });
+      userPrompt = `Subject: ${subject}
+Topic: ${topic}
+${courseCode ? `Course unit: ${courseCode}${courseName ? ` — ${courseName}` : ""}` : ""}
+
+Write full JUPEB-level study notes on this topic.`;
+      maxTokens = 1800;
+    } else {
+      if (!subject || !question || !options || typeof options !== "object" || !correctAnswer || !explanation) {
+        res.status(400).json({
+          error: "Missing required fields: subject, question, options{}, correctAnswer, explanation",
+        });
+        return;
+      }
+      const optionsText = Object.entries(options)
+        .map(([letter, text]) => `${letter}. ${text}`)
+        .join(" | ");
+      systemPrompt = buildExplainSystemPrompt({ subject, style });
+      userPrompt = `Subject: ${subject}
 Topic: ${topic || "N/A"}
 Difficulty: ${difficulty || "medium"}
 Question: ${question}
@@ -231,88 +203,41 @@ Correct answer: ${correctAnswer}${studentAnswer ? `\nStudent's answer: ${student
 Stored explanation (the correct, tested method — build on this, do not replace it): ${explanation}
 
 Help the student understand why the correct answer is right${studentAnswer ? ", and address the specific misconception behind picking their wrong answer" : ""}.`;
-
-    const messages = [
-      { role: "system", content: SYSTEM_PROMPT + (style === "beginner" ? BEGINNER_ADDITION : "") + (isLastFreeUse ? LAST_FREE_HINT_ADDITION : "") },
-      { role: "user", content: userPrompt },
-    ];
-
-    let text = null;
-    let modelUsed = null;
-    let lastErr = null;
-
-    for (const { model, maxTokens } of MODEL_CHAIN) {
-      let aiRes;
-      try {
-        aiRes = await fetch(GROQ_ENDPOINT, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            max_tokens: maxTokens,
-          }),
-        });
-      } catch (networkErr) {
-        console.error(`ai-tutor: network error calling ${model}:`, networkErr);
-        lastErr = networkErr;
-        continue; // try next tier
-      }
-
-      if (!aiRes.ok) {
-        const errText = await aiRes.text().catch(() => "");
-        console.error(`ai-tutor: ${model} returned ${aiRes.status}:`, errText);
-        lastErr = { status: aiRes.status, errText };
-        continue; // quota exhausted or model error — fall through to next tier
-      }
-
-      const aiData = await aiRes.json();
-      const choice = aiData?.choices?.[0];
-      const raw = choice?.message?.content;
-      const finishReason = choice?.finish_reason;
-
-      if (!raw) {
-        console.error(`ai-tutor: ${model} returned empty content`);
-        lastErr = { status: 502, errText: "empty content" };
-        continue;
-      }
-
-      // A 200 response can still be broken: finish_reason "length" means
-      // the model got cut off mid-response before it was done. That's worse
-      // than an honest error — it looks fine until a student notices the
-      // explanation just stops — so treat it as a failure and fall through
-      // to the next tier rather than serving truncated content.
-      if (finishReason === "length") {
-        console.error(`ai-tutor: ${model} response truncated (finish_reason=length, max_tokens=${maxTokens})`);
-        lastErr = { status: 502, errText: "response truncated" };
-        continue;
-      }
-
-      text = stripReasoningPreamble(raw);
-      modelUsed = model;
-      console.log(`ai-tutor: served via ${model} (${aiData?.usage?.total_tokens || "?"} tokens, finish_reason=${finishReason})`);
-      break; // success — stop trying further tiers
+      maxTokens = 1000;
     }
 
-    if (!text) {
-      console.error("ai-tutor: all models in chain failed. Last error:", lastErr);
-      res.status(lastErr?.status === 429 ? 429 : 502).json({
-        error: "AI Tutor unavailable right now",
-        fallbackToStored: true,
+    const aiRes = await fetch(GROQ_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => "");
+      console.error("Groq API error:", aiRes.status, errText);
+      res.status(aiRes.status === 429 ? 429 : 502).json({
+        error: `AI ${requestedMode === "notes" ? "notes" : "Tutor"} unavailable right now`,
+        fallbackToStored: requestedMode === "explain",
       });
       return;
     }
 
-    try {
-      await counterRef.set({ count: FieldValue.increment(1) }, { merge: true });
-    } catch (err) {
-      console.error("ai-tutor: failed to increment usage counter:", err);
-      // Don't fail the request over a counter write — the student already
-      // has their explanation. Worst case, this one call doesn't count
-      // against their cap.
+    const aiData = await aiRes.json();
+    const text = aiData?.choices?.[0]?.message?.content;
+
+    if (!text) {
+      res.status(502).json({ error: "Empty AI response", fallbackToStored: requestedMode === "explain" });
+      return;
     }
 
     res.status(200).json({ text });

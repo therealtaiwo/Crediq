@@ -5,7 +5,7 @@ import {
   ChevronLeft, CheckCircle, AlertCircle, Zap, WifiOff, X, AlertTriangle,
   Eye, EyeOff, MessageCircle, Flag, Award, Users, Calendar, User,
   TrendingUp, Clock, Star, ChevronRight, Shield, BookOpen, Lock,
-  RefreshCw, Copy, Bell, Brain, Sparkles, GraduationCap
+  RefreshCw, Copy, Bell, Brain, Sparkles, GraduationCap, Sigma, Search
 } from "lucide-react";
 import { auth, db, track } from "./firebase";
 import {
@@ -5389,14 +5389,14 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
           {q.topic&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,letterSpacing:"0.12em",flex:1,marginRight:8}}>{subject==="mixed"&&q.subject?`${q.subject.toUpperCase()} · `:""}{q.topic.toUpperCase()}</div>}
           <button className="btn-press" onClick={()=>setShowNav(!showNav)} style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.muted,background:T.surface,border:`1px solid ${T.border}`,borderRadius:5,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>{answeredCount}/{totalQ} answered</button>
         </div>
-        <div style={{fontSize:15,color:T.text,lineHeight:1.65,marginBottom:22,fontWeight:500,fontFamily:"'Playfair Display','Noto Sans Math',serif",whiteSpace:"pre-wrap"}}>{q.question}</div>
+        <div style={{fontSize:15,color:T.text,lineHeight:1.65,marginBottom:22,fontWeight:500,fontFamily:"'Playfair Display','Noto Sans Math',serif",whiteSpace:"pre-wrap"}}>{renderMathText(q.question,T)}</div>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {Object.entries(q.options).sort(([a],[b])=>a.charCodeAt(0)-b.charCodeAt(0)).map(([k,v])=>{
             const selected=answers[current]===k;
             return (
               <button key={k} onClick={()=>handleAnswer(k)} className={`btn-press${lastAnswer===k&&selected?" answer-bounce":""}`} style={{width:"100%",padding:"14px 16px",border:`1.5px solid ${selected?T.gold:T.muted+"55"}`,borderRadius:10,background:selected?"rgba(184,151,62,0.16)":T.surface,cursor:"pointer",textAlign:"left",display:"flex",gap:12,alignItems:"flex-start",transition:"border .15s,background .15s",boxShadow:selected?`0 0 0 1px ${T.gold}33`:"none"}}>
                 <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:selected?T.gold:T.text,fontWeight:700,minWidth:16,paddingTop:1,opacity:selected?1:0.75}}>{k}.</span>
-                <span style={{fontSize:14,color:T.text,lineHeight:1.5}}>{v}</span>
+                <span style={{fontSize:14,color:T.text,lineHeight:1.5}}>{renderMathText(v,T)}</span>
               </button>
             );
           })}
@@ -5479,6 +5479,55 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   return{text:data.text,cached:false};
 }
 
+// ─── TOPIC NOTES (full-topic JUPEB notes, distinct from per-question AI Tutor) ─
+// Cached per topic (one doc per subject+topic), but tagged with the parent
+// JUPEB course unit (e.g. "PHY 001") so notes can also be browsed/grouped by
+// unit later without re-keying anything — courseCode lives on the same doc.
+const topicSlug=topic=>(topic||"general").toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"general";
+
+async function getTopicNotes({user,subject,topic}){
+  const courseCode=getCourseUnit(subject,topic)||"";
+  const noteId=`${subject}_${topicSlug(topic)}`.replace(/[\/\.#\[\]]/g,"_");
+  const noteRef=doc(db,"topicNotes",noteId);
+  const noteSnap=await getDoc(noteRef);
+  const cachedContent=noteSnap.exists()?noteSnap.data()?.content:null;
+  if(cachedContent)return{text:cachedContent,cached:true};
+
+  if(!user?.isPremium)return{blocked:"premium-required"};
+
+  const course=(JUPEB_COURSES[subject]||[]).find(c=>c.code===courseCode);
+
+  let res;
+  try{
+    const token=await auth.currentUser.getIdToken();
+    res=await fetch("/api/ai-tutor",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+      body:JSON.stringify({
+        mode:"notes",subject,topic,
+        courseCode,courseName:course?.name||"",courseDesc:course?.desc||"",
+        keywords:(course?.keywords||[]).slice(0,25),
+      })
+    });
+  }catch(err){return{blocked:"network-error"};}
+
+  if(res.status===429)return{blocked:"rate-limited"};
+  if(!res.ok)return{blocked:"generation-failed"};
+
+  const data=await res.json();
+  if(!data.text)return{blocked:"generation-failed"};
+
+  try{
+    await setDoc(noteRef,{
+      content:data.text,subject,topic:topic||"",courseCode,
+      generatedAt:new Date().toISOString(),
+    },{merge:true});
+  }catch(err){console.error("Failed to cache topic notes:",err);}
+
+  return{text:data.text,cached:false};
+}
+
 // Lightweight renderer for AI Tutor output — handles **bold** headers and
 // inline **bold**, real paragraph spacing. No markdown library dependency;
 // just enough to stop raw ** characters from showing to students.
@@ -5557,10 +5606,32 @@ function MathBlock({latex}){
   if(html)return <div dangerouslySetInnerHTML={{__html:html}}/>;
   return <div style={{fontStyle:"italic",textAlign:"center"}}>{latex}</div>;
 }
+// Normalizes raw text before any math rendering happens:
+// 1. Collapses \[...\] (display) and \(...\) (inline) LaTeX delimiters into
+//    the $$...$$ / $...$ forms the renderer below understands. This runs on
+//    the WHOLE string, before any splitting into lines — a \[ on one line
+//    with its closing \] several lines later (a real pattern the model
+//    produces, e.g. "\[\n\\operatorname{Var}(X-Y)=...\n\]") would never be
+//    reunited if normalized after the text is already split line-by-line,
+//    which is why the previous per-line regex fix still missed it.
+// 2. Converts the Unicode combining-right-arrow-above vector notation some
+//    stored questions use (e.g. "AB⃗" = letters + U+20D7) into proper KaTeX
+//    \overrightarrow{}. Most fonts can't render that combining character
+//    over a multi-letter span and show a tofu box instead.
+function preprocessMathText(text){
+  if(!text)return text;
+  return text
+    .replace(/\\\[([\s\S]*?)\\\]/g,(_,inner)=>`$$${inner.replace(/\s*\n\s*/g," ").trim()}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g,(_,inner)=>`$${inner.replace(/\s*\n\s*/g," ").trim()}$`)
+    .replace(/([A-Za-z]{1,3})\u20D7/g,(_,letters)=>`$\\overrightarrow{${letters}}$`);
+}
 // Splits a line on $$block$$ / $inline$ math delimiters, rendering each
 // math segment with real KaTeX typesetting and everything else through the
 // existing bold-text renderer, so **bold** and $math$ can coexist on one line.
+// Runs preprocessMathText first so \[ \] / \( \) / vector-arrow input is
+// normalized even for callers that don't pre-normalize themselves.
 function renderMathText(line,T){
+  line=preprocessMathText(line);
   const parts=line.split(/(\$\$[^$]+\$\$|\$[^$]+\$)/g);
   return parts.map((part,i)=>{
     if(part.startsWith("$$")&&part.endsWith("$$")&&part.length>3){
@@ -5577,7 +5648,10 @@ function AiTutorFormattedText({text,T}){
   const[showAnswer,setShowAnswer]=useState(false);
   const[speaking,setSpeaking]=useState(false);
   useKatexReady(); // kicks off KaTeX CDN load on mount; re-renders once ready
-  const lines=text.split("\n").filter(l=>l.trim().length>0);
+  // Normalize the WHOLE response before splitting into lines — see
+  // preprocessMathText's comment for why this must happen pre-split.
+  const normalizedText=preprocessMathText(text);
+  const lines=normalizedText.split("\n").filter(l=>l.trim().length>0);
   let currentSection=null;
   let formulaLineShown=false;
 
@@ -5585,7 +5659,7 @@ function AiTutorFormattedText({text,T}){
     if(!window.speechSynthesis)return;
     if(speaking){window.speechSynthesis.cancel();setSpeaking(false);return;}
     window.speechSynthesis.cancel();
-    let plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
+    let plain=normalizedText.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
     // ── LaTeX → spoken English (runs before anything else, since it needs
     // the braces/backslashes intact to know structure) ──────────────────
     // Fractions: \frac{a}{b} → "a over b". Run twice to catch one level
@@ -5670,7 +5744,7 @@ function AiTutorFormattedText({text,T}){
     window.speechSynthesis.speak(u);
   };
 
-  const answerBlock=text.includes("**Answer**")?text.split("**Answer**")[1].trim():null;
+  const answerBlock=normalizedText.includes("**Answer**")?normalizedText.split("**Answer**")[1].trim():null;
 
   return(
     <div style={{fontSize:13,color:T.text}}>
@@ -5830,6 +5904,63 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
         background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
         letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
       {state==="loading"?"Thinking…":"Help me understand this better"}
+    </button>
+  );
+}
+
+// ─── TOPIC NOTES BUTTON ───────────────────────────────────────────────────────
+// Separate from AiTutorButton on purpose — this generates notes on the WHOLE
+// topic (not just the current question), so it's offered independently of
+// whether the student has tapped AI Tutor at all. Premium-only, no free-cap
+// tier (unlike AI Tutor's 3/day) since it's a heavier, cached-once value-add.
+function TopicNotesButton({user,subject,topic,T}){
+  const[state,setState]=useState("idle"); // idle | loading | shown | paywall | blocked
+  const[notesText,setNotesText]=useState(null);
+  const[blockedReason,setBlockedReason]=useState(null);
+
+  if(!topic)return null;
+
+  const handleTap=async()=>{
+    setState("loading");
+    const result=await getTopicNotes({user,subject,topic});
+    if(result.text){setNotesText(result.text);setState("shown");}
+    else if(result.blocked==="premium-required"){setState("paywall");}
+    else{setBlockedReason(result.blocked);setState("blocked");}
+  };
+
+  if(state==="shown"){
+    return(
+      <div style={{marginTop:10,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.gold}33`}}>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.gold,marginBottom:10}}>
+          FULL NOTES · {topic.toUpperCase()}
+        </div>
+        <AiTutorFormattedText text={notesText} T={T}/>
+        <CopyToNotesButton user={user} content={notesText} subject={subject} topic={topic} T={T}/>
+      </div>
+    );
+  }
+
+  if(state==="paywall"){
+    return(
+      <div style={{marginTop:10,fontSize:11,color:T.muted,fontStyle:"italic"}}>
+        Full topic notes are a Premium feature.
+      </div>
+    );
+  }
+
+  if(state==="blocked"){
+    const message=blockedReason==="rate-limited"
+      ?"Notes generation is busy right now — try again in a little while."
+      :"Couldn't generate notes right now — try again shortly.";
+    return <div style={{marginTop:10,fontSize:11,color:T.muted,fontStyle:"italic"}}>{message}</div>;
+  }
+
+  return(
+    <button onClick={handleTap} disabled={state==="loading"} className="btn-press"
+      style={{marginTop:10,width:"100%",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${T.gold}55`,
+        background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
+        letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
+      {state==="loading"?"Generating notes…":`📝 Full notes on ${topic}`}
     </button>
   );
 }
@@ -6143,7 +6274,182 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
 }
 
 // ─── TUTOR SCREEN — learn while answering, immediate per-question reveal ──────
-function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
+// ─── REFERENCE BANK — static formulas/constants/tables, zero AI cost ──────────
+// v1 starter set. Real, correct, useful now — meant to grow over time, not
+// exhaustive on day one. Formulas use $$...$$ / $...$ so they reuse the exact
+// same KaTeX rendering already built for AI Tutor (MathBlock/MathInline).
+const REFERENCE_BANK={
+  Mathematics:[
+    {category:"Derivatives",items:[
+      {name:"sin x",formula:"$$\\frac{d}{dx}(\\sin x) = \\cos x$$"},
+      {name:"cos x",formula:"$$\\frac{d}{dx}(\\cos x) = -\\sin x$$"},
+      {name:"tan x",formula:"$$\\frac{d}{dx}(\\tan x) = \\sec^{2} x$$"},
+      {name:"cot x",formula:"$$\\frac{d}{dx}(\\cot x) = -\\csc^{2} x$$"},
+      {name:"sec x",formula:"$$\\frac{d}{dx}(\\sec x) = \\sec x \\tan x$$"},
+      {name:"csc x",formula:"$$\\frac{d}{dx}(\\csc x) = -\\csc x \\cot x$$"},
+      {name:"eˣ",formula:"$$\\frac{d}{dx}(e^{x}) = e^{x}$$"},
+      {name:"aˣ",formula:"$$\\frac{d}{dx}(a^{x}) = a^{x}\\ln a$$"},
+      {name:"ln x",formula:"$$\\frac{d}{dx}(\\ln x) = \\frac{1}{x}$$"},
+      {name:"xⁿ (power rule)",formula:"$$\\frac{d}{dx}(x^{n}) = nx^{n-1}$$"},
+      {name:"Product rule",formula:"$$\\frac{d}{dx}(uv) = u'v + uv'$$"},
+      {name:"Quotient rule",formula:"$$\\frac{d}{dx}\\left(\\frac{u}{v}\\right) = \\frac{u'v - uv'}{v^{2}}$$"},
+      {name:"Chain rule",formula:"$$\\frac{dy}{dx} = \\frac{dy}{du}\\cdot\\frac{du}{dx}$$"},
+      {name:"Parametric",formula:"$$\\frac{dy}{dx} = \\frac{dy/d\\theta}{dx/d\\theta}$$"},
+    ]},
+    {category:"Integrals",items:[
+      {name:"sin x",formula:"$$\\int \\sin x \\, dx = -\\cos x + C$$"},
+      {name:"cos x",formula:"$$\\int \\cos x \\, dx = \\sin x + C$$"},
+      {name:"sec²x",formula:"$$\\int \\sec^{2} x \\, dx = \\tan x + C$$"},
+      {name:"eˣ",formula:"$$\\int e^{x} \\, dx = e^{x} + C$$"},
+      {name:"1/x",formula:"$$\\int \\frac{1}{x} \\, dx = \\ln|x| + C$$"},
+      {name:"xⁿ (n ≠ -1)",formula:"$$\\int x^{n} \\, dx = \\frac{x^{n+1}}{n+1} + C$$"},
+      {name:"Integration by parts",formula:"$$\\int u \\, dv = uv - \\int v \\, du$$"},
+    ]},
+    {category:"Trig identities",items:[
+      {name:"Pythagorean",formula:"$$\\sin^{2}\\theta + \\cos^{2}\\theta = 1$$"},
+      {name:"Double angle (sin)",formula:"$$\\sin 2\\theta = 2\\sin\\theta\\cos\\theta$$"},
+      {name:"Double angle (cos)",formula:"$$\\cos 2\\theta = \\cos^{2}\\theta - \\sin^{2}\\theta$$"},
+      {name:"tan θ",formula:"$$\\tan\\theta = \\frac{\\sin\\theta}{\\cos\\theta}$$"},
+      {name:"1 + tan²θ",formula:"$$1 + \\tan^{2}\\theta = \\sec^{2}\\theta$$"},
+      {name:"Sine rule",formula:"$$\\frac{a}{\\sin A} = \\frac{b}{\\sin B} = \\frac{c}{\\sin C}$$"},
+      {name:"Cosine rule",formula:"$$a^{2} = b^{2} + c^{2} - 2bc\\cos A$$"},
+    ]},
+    {category:"Series & Binomial",items:[
+      {name:"Arithmetic sum",formula:"$$S_n = \\frac{n}{2}\\left(2a + (n-1)d\\right)$$"},
+      {name:"Geometric sum",formula:"$$S_n = \\frac{a(1-r^{n})}{1-r}$$"},
+      {name:"Sum to infinity",formula:"$$S_\\infty = \\frac{a}{1-r}, \\ |r|<1$$"},
+      {name:"Binomial theorem",formula:"$$(a+b)^{n} = \\sum_{k=0}^{n} \\binom{n}{k}a^{n-k}b^{k}$$"},
+      {name:"Quadratic formula",formula:"$$x = \\frac{-b \\pm \\sqrt{b^{2}-4ac}}{2a}$$"},
+    ]},
+  ],
+  Physics:[
+    {category:"Constants",items:[
+      {name:"Speed of light, c",formula:"$$c = 3.0 \\times 10^{8} \\text{ m/s}$$"},
+      {name:"Gravitational constant, G",formula:"$$G = 6.67 \\times 10^{-11} \\text{ N m}^{2}\\text{kg}^{-2}$$"},
+      {name:"Acceleration due to gravity, g",formula:"$$g = 9.8 \\text{ m/s}^{2}$$"},
+      {name:"Planck's constant, h",formula:"$$h = 6.626 \\times 10^{-34} \\text{ J s}$$"},
+      {name:"Elementary charge, e",formula:"$$e = 1.6 \\times 10^{-19} \\text{ C}$$"},
+      {name:"Electron mass",formula:"$$m_e = 9.11 \\times 10^{-31} \\text{ kg}$$"},
+      {name:"Avogadro's number",formula:"$$N_A = 6.022 \\times 10^{23} \\text{ mol}^{-1}$$"},
+      {name:"Boltzmann constant, k",formula:"$$k = 1.38 \\times 10^{-23} \\text{ J/K}$$"},
+    ]},
+    {category:"Mechanics",items:[
+      {name:"Newton's 2nd law",formula:"$$F = ma$$"},
+      {name:"Kinematics (v)",formula:"$$v = u + at$$"},
+      {name:"Kinematics (s)",formula:"$$s = ut + \\frac{1}{2}at^{2}$$"},
+      {name:"Kinematics (v²)",formula:"$$v^{2} = u^{2} + 2as$$"},
+      {name:"Momentum",formula:"$$p = mv$$"},
+      {name:"Kinetic energy",formula:"$$KE = \\frac{1}{2}mv^{2}$$"},
+      {name:"Gravitational PE",formula:"$$PE = mgh$$"},
+      {name:"Work done",formula:"$$W = Fd\\cos\\theta$$"},
+      {name:"Power",formula:"$$P = \\frac{W}{t}$$"},
+    ]},
+    {category:"Electricity",items:[
+      {name:"Ohm's law",formula:"$$V = IR$$"},
+      {name:"Power (electrical)",formula:"$$P = IV = I^{2}R$$"},
+      {name:"Coulomb's law",formula:"$$F = \\frac{kq_1q_2}{r^{2}}$$"},
+      {name:"Capacitance",formula:"$$C = \\frac{Q}{V}$$"},
+    ]},
+    {category:"Waves & Modern Physics",items:[
+      {name:"Wave equation",formula:"$$v = f\\lambda$$"},
+      {name:"Photon energy",formula:"$$E = hf$$"},
+      {name:"Photon momentum",formula:"$$p = \\frac{h}{\\lambda}$$"},
+    ]},
+  ],
+  Chemistry:[
+    {category:"Constants",items:[
+      {name:"Gas constant, R",formula:"$$R = 8.314 \\text{ J mol}^{-1}\\text{K}^{-1}$$"},
+      {name:"Avogadro's number",formula:"$$N_A = 6.022 \\times 10^{23} \\text{ mol}^{-1}$$"},
+      {name:"Faraday's constant, F",formula:"$$F = 96500 \\text{ C mol}^{-1}$$"},
+      {name:"Standard molar volume",formula:"$$V_m = 22.4 \\text{ L at STP}$$"},
+    ]},
+    {category:"Mole Concept & Gas Laws",items:[
+      {name:"Moles",formula:"$$n = \\frac{\\text{mass}}{\\text{molar mass}}$$"},
+      {name:"Ideal gas law",formula:"$$PV = nRT$$"},
+      {name:"Boyle's law",formula:"$$P_1V_1 = P_2V_2$$"},
+      {name:"Concentration",formula:"$$c = \\frac{n}{V}$$"},
+    ]},
+    {category:"Equilibrium & Kinetics",items:[
+      {name:"Equilibrium constant",formula:"$$K_c = \\frac{[\\text{products}]}{[\\text{reactants}]}$$"},
+      {name:"pH",formula:"$$pH = -\\log[H^{+}]$$"},
+      {name:"First-order half-life",formula:"$$t_{1/2} = \\frac{0.693}{k}$$"},
+    ]},
+    {category:"Electrochemistry",items:[
+      {name:"Faraday's 1st law",formula:"$$m = \\frac{Q \\times M}{F \\times z}$$"},
+      {name:"Cell EMF",formula:"$$E_{cell} = E_{cathode} - E_{anode}$$"},
+    ]},
+  ],
+};
+
+function ReferenceBankScreen({user,onBack,dark,setDark,T}){
+  useKatexReady();
+  const userSubjects=(user.subjects||[]).filter(s=>REFERENCE_BANK[s]);
+  const availableSubjects=Object.keys(REFERENCE_BANK).filter(s=>userSubjects.length===0||userSubjects.includes(s));
+  const[selSub,setSelSub]=useState(availableSubjects[0]||"Mathematics");
+  const[query,setQuery]=useState("");
+
+  const categories=REFERENCE_BANK[selSub]||[];
+  const filtered=query.trim()?categories.map(cat=>({
+    ...cat,
+    items:cat.items.filter(it=>it.name.toLowerCase().includes(query.toLowerCase())||cat.category.toLowerCase().includes(query.toLowerCase()))
+  })).filter(cat=>cat.items.length>0):categories;
+
+  return(
+    <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
+      <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
+          <ThemeBtn dark={dark} setDark={setDark} T={T}/>
+        </div>
+        <div style={{marginTop:14,display:"flex",alignItems:"center",gap:8}}>
+          <Sigma size={20} color={T.gold}/>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>Formula Bank</div>
+        </div>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(247,243,236,0.35)",letterSpacing:"0.08em",marginTop:3}}>Formulas, constants & tables — quick revision, no AI needed</div>
+      </div>
+
+      <div style={{padding:18,maxWidth:1000,margin:"0 auto",width:"100%"}}>
+        <div style={{position:"relative",marginBottom:14}}>
+          <Search size={14} color={T.muted} style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)"}}/>
+          <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search e.g. 'derivative of sin', 'g', 'pH'..."
+            style={{width:"100%",padding:"10px 12px 10px 34px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,color:T.text,fontSize:13,fontFamily:"'DM Mono',monospace"}}/>
+        </div>
+
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+          {availableSubjects.map(sub=>{
+            const meta=SUBJECT_META[sub]||{icon:"BKS",color:T.gold};
+            const active=sub===selSub;
+            return(
+              <button key={sub} className="btn-press" onClick={()=>{setSelSub(sub);setQuery("");}} style={{padding:"8px 14px",border:`1px solid ${active?meta.color:T.border}`,borderRadius:8,background:active?`${meta.color}15`:T.surface,cursor:"pointer"}}>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:active?meta.color:T.muted,fontWeight:active?700:400}}>{sub}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {filtered.length===0&&(
+          <div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontSize:12}}>No matches — try a different search term.</div>
+        )}
+
+        {filtered.map(cat=>(
+          <div key={cat.category} style={{marginBottom:22}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,letterSpacing:"0.12em",marginBottom:8}}>{cat.category.toUpperCase()}</div>
+            {cat.items.map(it=>(
+              <div key={it.name} style={{padding:"12px 14px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,marginBottom:8}}>
+                <div style={{fontSize:12,color:T.muted,marginBottom:4}}>{it.name}</div>
+                <div style={{fontSize:15,color:T.gold}}>
+                  {renderMathText(it.formula,T)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
   const userSubjects=user.subjects||[];
   const[selSub,setSelSub]=useState(userSubjects[0]||"");
   const[session,setSession]=useState(null); // array of questions once started
@@ -6152,6 +6458,11 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
   const[revealed,setRevealed]=useState(false);
   const[showReport,setShowReport]=useState(false);
   const[showCalc,setShowCalc]=useState(false);
+  // Notes and Formula Bank open as overlays ON TOP of the tutor session
+  // (not via the top-level screen router) so closing them lands you right
+  // back on the same question — no state lost, no trip through Dashboard.
+  const[showNotes,setShowNotes]=useState(false);
+  const[showFormulaBank,setShowFormulaBank]=useState(false);
   const qbLoaded=Object.keys(QB).length>0;
 
   const startSession=()=>{
@@ -6184,7 +6495,8 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               <ThemeBtn dark={dark} setDark={setDark} T={T}/>
-              <button className="btn-press" onClick={onNotes} title="My Notes" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><BookOpen size={17}/></button>
+              <button className="btn-press" onClick={()=>setShowFormulaBank(true)} title="Formula Bank" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><Sigma size={17}/></button>
+              <button className="btn-press" onClick={()=>setShowNotes(true)} title="My Notes" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><BookOpen size={17}/></button>
             </div>
           </div>
           <div style={{marginTop:14}}>
@@ -6219,6 +6531,16 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
             </BtnPrimary>
           )}
         </div>
+        <AnimatePresence>{showFormulaBank&&(
+          <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
+            <ReferenceBankScreen user={user} onBack={()=>setShowFormulaBank(false)} dark={dark} setDark={setDark} T={T}/>
+          </motion.div>
+        )}</AnimatePresence>
+        <AnimatePresence>{showNotes&&(
+          <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
+            <NotesScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
+          </motion.div>
+        )}</AnimatePresence>
       </div>
     );
   }
@@ -6232,6 +6554,16 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
     <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
       {showReport&&<ReportModal question={q} user={user} onClose={()=>setShowReport(false)} onSubmit={data=>track("question_reported",{uid:user?.uid,...data})} T={T}/>}
       <AnimatePresence>{showCalc&&<ScientificCalc T={T} onClose={()=>setShowCalc(false)}/>}</AnimatePresence>
+      <AnimatePresence>{showFormulaBank&&(
+        <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
+          <ReferenceBankScreen user={user} onBack={()=>setShowFormulaBank(false)} dark={dark} setDark={setDark} T={T}/>
+        </motion.div>
+      )}</AnimatePresence>
+      <AnimatePresence>{showNotes&&(
+        <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
+          <NotesScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
+        </motion.div>
+      )}</AnimatePresence>
       <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <button className="btn-press" onClick={()=>setSession(null)} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Exit</button>
@@ -6239,14 +6571,15 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
             <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.5)"}}>{idx+1} / {session.length}</span>
             <button className="btn-press" onClick={()=>setShowCalc(true)} title="Calculator" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4,fontSize:15,lineHeight:1}}>🧮</button>
             <button className="btn-press" onClick={()=>setShowReport(true)} style={{background:"none",border:"none",color:"rgba(247,243,236,0.2)",cursor:"pointer",padding:4}}><Flag size={14}/></button>
-            <button className="btn-press" onClick={onNotes} title="My Notes" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><BookOpen size={16}/></button>
+            <button className="btn-press" onClick={()=>setShowFormulaBank(true)} title="Formula Bank" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><Sigma size={16}/></button>
+            <button className="btn-press" onClick={()=>setShowNotes(true)} title="My Notes" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4}}><BookOpen size={16}/></button>
           </div>
         </div>
       </div>
 
       <div style={{padding:18,maxWidth:700,margin:"0 auto",width:"100%"}}>
         <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em",marginBottom:8}}>{q.topic?.toUpperCase()}</div>
-        <div style={{fontSize:16,lineHeight:1.5,marginBottom:20,color:T.text,whiteSpace:"pre-wrap"}}>{q.question}</div>
+        <div style={{fontSize:16,lineHeight:1.5,marginBottom:20,color:T.text,whiteSpace:"pre-wrap"}}>{renderMathText(q.question,T)}</div>
 
         {optionEntries.map(([letter,text])=>{
           const isSel=selectedOpt===letter;
@@ -6261,7 +6594,7 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
                 cursor:revealed?"default":"pointer",textAlign:"left",display:"flex",gap:12,alignItems:"flex-start",
                 marginBottom:8}}>
               <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:T.gold}}>{letter}.</span>
-              <span style={{color:T.text,fontSize:14}}>{text}</span>
+              <span style={{color:T.text,fontSize:14}}>{renderMathText(text,T)}</span>
             </button>
           );
         })}
@@ -6275,11 +6608,12 @@ function TutorScreen({user,QB,onBack,onNotes,dark,setDark,T,onUpgrade}) {
             </div>
             {q.explanation&&(
               <div style={{padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`,fontSize:13,lineHeight:1.55,color:T.text,whiteSpace:"pre-wrap"}}>
-                {q.explanation}
+                {renderMathText(q.explanation,T)}
               </div>
             )}
 
             <AiTutorButton user={user} question={q} questionId={q.id} studentAnswer={selectedOpt} onUpgrade={onUpgrade} T={T}/>
+            <TopicNotesButton user={user} subject={q.subject} topic={q.topic} T={T}/>
 
             <BtnPrimary onClick={next} T={T}>
               {idx+1>=session.length?"Finish Session":"Next Question →"}
@@ -6817,7 +7151,7 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
                     </button>
                   </div>
                 </div>
-                <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
+                <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{renderMathText(r.question,T)}</div>
                 {!r.correct&&(
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6,lineHeight:1.6}}>
                     <div>You picked <strong>{r.userAnswer||"—"}</strong>{r.userAnswerText?` — "${r.userAnswerText}"`:""}</div>
@@ -6827,7 +7161,7 @@ function ResultsScreen({result,user,history,onHome,onRetry,onDrill,dark,setDark,
                 {r.explanation&&(
                   <div style={{background:`${T.gold}09`,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 12px"}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold,letterSpacing:"0.1em",marginBottom:5}}>EXPLANATION</div>
-                    <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{r.explanation}</div>
+                    <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{renderMathText(r.explanation,T)}</div>
                   </div>
                 )}
               </div>
@@ -6919,7 +7253,7 @@ function MistakesScreen({history,user,T,dark,setDark,onDrill,onBack}) {
                       <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:"0.06em"}}>REPORT</span>
                     </button>
                   </div>
-                  <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{r.question}</div>
+                  <div style={{fontSize:13,color:T.text,lineHeight:1.6,marginBottom:10}}>{renderMathText(r.question,T)}</div>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger,marginBottom:6,lineHeight:1.6}}>
                     <div>You picked <strong>{r.userAnswer||"—"}</strong>{r.userAnswerText?` — "${r.userAnswerText}"`:""}</div>
                     <div>Correct answer: <strong>{r.correctAnswer}</strong>{r.correctAnswerText?` — "${r.correctAnswerText}"`:""}</div>
@@ -6927,7 +7261,7 @@ function MistakesScreen({history,user,T,dark,setDark,onDrill,onBack}) {
                   {r.explanation&&(
                     <div style={{background:`${T.gold}09`,border:`1px solid ${T.border}`,borderRadius:7,padding:"10px 12px",marginBottom:10}}>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.gold,letterSpacing:"0.1em",marginBottom:5}}>EXPLANATION</div>
-                      <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{r.explanation}</div>
+                      <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{renderMathText(r.explanation,T)}</div>
                     </div>
                   )}
                   <button className="btn-press" onClick={()=>onDrill&&onDrill()}
@@ -9959,7 +10293,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
           {/* Question text — only show if not empty */}
           {q.question&&q.question.trim()&&(
             <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,whiteSpace:"pre-wrap"}}>
-              {q.question}
+              {renderMathText(q.question,T)}
             </div>
           )}
 
@@ -10476,6 +10810,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
             {icon:<BookOpen size={18} color={T.gold}/>,label:"My Notes",sub:"Everything you've saved, in one place",action:()=>onNav("notes"),accent:T.gold},
+            {icon:<Sigma size={18} color={T.gold}/>,label:"Formula Bank",sub:"Formulas, constants & tables — no AI needed",action:()=>onNav("formulabank"),accent:T.gold},
             {icon:<Brain size={18} color={T.gold}/>,label:"Intelligence Report",sub:"Your full readiness score, breakdown & next actions",action:()=>onNav("intelligence"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
               ?[{icon:<Award size={18} color="#B8973E"/>,label:"Campus Ambassador",sub:`${user.referralCount||0} students referred · ${AMBASSADOR_TIERS.find(t=>(user.referralCount||0)>=t.min&&(user.referralCount||0)<=t.max)?.name||"Bronze"} tier`,action:()=>onNav("ambassador"),accent:"#B8973E"}]
@@ -11449,7 +11784,8 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
-          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} onNotes={()=>setScreen("notes")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
+          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
+          {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
           {screen==="notes"&&user&&<NotesScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}

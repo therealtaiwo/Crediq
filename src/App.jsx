@@ -5644,39 +5644,28 @@ function renderMathText(line,T){
   });
 }
 
-function AiTutorFormattedText({text,T}){
-  const[showAnswer,setShowAnswer]=useState(false);
+// ── Shared Listen button — same speak logic used everywhere text needs to
+// be read aloud (AI Tutor explanations, and now typed/pasted notes too).
+// Pulled into one component so there's only one place to fix if the speech
+// conversion ever needs adjusting again, instead of two copies drifting apart.
+function ListenButton({text,T}){
   const[speaking,setSpeaking]=useState(false);
-  useKatexReady(); // kicks off KaTeX CDN load on mount; re-renders once ready
-  // Normalize the WHOLE response before splitting into lines — see
-  // preprocessMathText's comment for why this must happen pre-split.
-  const normalizedText=preprocessMathText(text);
-  const lines=normalizedText.split("\n").filter(l=>l.trim().length>0);
-  let currentSection=null;
-  let formulaLineShown=false;
 
   const speak=()=>{
     if(!window.speechSynthesis)return;
     if(speaking){window.speechSynthesis.cancel();setSpeaking(false);return;}
     window.speechSynthesis.cancel();
-    let plain=normalizedText.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
-    // ── LaTeX → spoken English (runs before anything else, since it needs
-    // the braces/backslashes intact to know structure) ──────────────────
-    // Fractions: \frac{a}{b} → "a over b". Run twice to catch one level
-    // of nesting (a fraction inside a fraction).
+    let plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
     for(let pass=0;pass<2;pass++){
       plain=plain.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g," $1 over $2 ");
     }
-    // Powers: ^{2}/^2 → "squared", ^{3}/^3 → "cubed", else "to the power of N"
     const powerWord=n=>n==="2"?" squared ":n==="3"?" cubed ":` to the power of ${n} `;
     plain=plain
       .replace(/\^\{([^{}]+)\}/g,(_,n)=>powerWord(n))
       .replace(/\^([a-zA-Z0-9])/g,(_,n)=>powerWord(n));
-    // Subscripts: _{i}/_i → "sub i"
     plain=plain
       .replace(/_\{([^{}]+)\}/g," sub $1 ")
       .replace(/_([a-zA-Z0-9])/g," sub $1 ");
-    // Roots and common LaTeX commands
     plain=plain
       .replace(/\\sqrt\{([^{}]+)\}/g," square root of $1 ")
       .replace(/\\left|\\right/g,"")
@@ -5699,25 +5688,15 @@ function AiTutorFormattedText({text,T}){
       .replace(/\\gamma/g," gamma ")
       .replace(/\\Delta/g," delta ")
       .replace(/\\pi/g," pi ")
-      // Catch-all for any LaTeX command missed above — drop the backslash,
-      // keep the word, so it reads as something rather than nothing
       .replace(/\\([a-zA-Z]+)/g,"$1")
-      // Strip math delimiters and any leftover braces
       .replace(/\$\$|\$/g,"")
       .replace(/[{}]/g," ");
-    // Disambiguate implicit-multiplication variable pairs that slipped
-    // through outside LaTeX (e.g. "ma" as "mother" instead of "m times a").
-    // Word-boundary matched so real words like "mass"/"matter"/"format"
-    // are untouched. Deliberately skips "at" — too common a real
-    // preposition to safely rewrite.
     plain=plain
       .replace(/\bma\b/g," m times a ")
       .replace(/\bmg\b/g," m times g ")
       .replace(/\bmv\b/g," m times v ")
       .replace(/\but\b/g," u times t ")
       .replace(/\bPV\b/g," P times V ");
-    // Speak any remaining Unicode math symbols as words instead of reading
-    // them literally (defense in depth, in case LaTeX wasn't used)
     plain=plain
       .replace(/²/g," squared ")
       .replace(/³/g," cubed ")
@@ -5744,14 +5723,31 @@ function AiTutorFormattedText({text,T}){
     window.speechSynthesis.speak(u);
   };
 
+  if(!text||!text.trim())return null;
+
+  return(
+    <button onClick={speak} style={{marginBottom:10,background:speaking?`${T.gold}1a`:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"5px 10px",color:T.gold,fontSize:10,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
+      <span style={{display:"inline-block",animation:speaking?"timerPulse 0.9s ease-in-out infinite":"none"}}>{speaking?"⏸":"🔊"}</span>
+      {speaking?"Playing… (tap to stop)":"Listen"}
+    </button>
+  );
+}
+
+function AiTutorFormattedText({text,T}){
+  const[showAnswer,setShowAnswer]=useState(false);
+  useKatexReady(); // kicks off KaTeX CDN load on mount; re-renders once ready
+  // Normalize the WHOLE response before splitting into lines — see
+  // preprocessMathText's comment for why this must happen pre-split.
+  const normalizedText=preprocessMathText(text);
+  const lines=normalizedText.split("\n").filter(l=>l.trim().length>0);
+  let currentSection=null;
+  let formulaLineShown=false;
+
   const answerBlock=normalizedText.includes("**Answer**")?normalizedText.split("**Answer**")[1].trim():null;
 
   return(
     <div style={{fontSize:13,color:T.text}}>
-      <button onClick={speak} style={{marginBottom:10,background:speaking?`${T.gold}1a`:"none",border:`1px solid ${T.gold}55`,borderRadius:8,padding:"5px 10px",color:T.gold,fontSize:10,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
-        <span style={{display:"inline-block",animation:speaking?"timerPulse 0.9s ease-in-out infinite":"none"}}>{speaking?"⏸":"🔊"}</span>
-        {speaking?"Playing… (tap to stop)":"Listen"}
-      </button>
+      <ListenButton text={normalizedText} T={T}/>
       {lines.map((line,i)=>{
         const trimmed=line.trim();
         const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
@@ -6835,6 +6831,7 @@ function NotesScreen({user,onBack,T}) {
                   <div style={{display:"flex",justifyContent:"flex-end",marginBottom:4}}>
                     <button onClick={()=>deleteEntry(idx)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:2}}><X size={13}/></button>
                   </div>
+                  {entry.content&&entry.content.trim()&&<ListenButton text={entry.content} T={T}/>}
                   <textarea value={entry.content} onChange={e=>updateEntry(idx,e.target.value)} placeholder="Type your note…" rows={4}
                     style={{width:"100%",background:"none",border:"none",outline:"none",color:T.text,fontSize:14,lineHeight:1.5,resize:"vertical",fontFamily:"inherit"}}/>
                 </>

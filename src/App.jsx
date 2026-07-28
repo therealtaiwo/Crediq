@@ -5754,9 +5754,16 @@ function AiTutorFormattedText({text,T}){
       </button>
       {lines.map((line,i)=>{
         const trimmed=line.trim();
-        const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
+        // Headers are meant to arrive as **Bold** on their own line, but a
+        // prompt drift (or older cached content generated before this was
+        // standardized) can produce markdown ## headings instead — those
+        // used to fall through as uncolored plain text. Recognize both forms.
+        const boldMatch=/^\*\*([^*]+)\*\*$/.exec(trimmed);
+        const hashMatch=/^#{1,6}\s*\*{0,2}([^*#]+?)\*{0,2}\s*$/.exec(trimmed);
+        const headerLabel=boldMatch?boldMatch[1]:hashMatch?hashMatch[1].trim():null;
+        const isHeader=headerLabel!==null;
         if(isHeader){
-          const label=trimmed.slice(2,-2);
+          const label=headerLabel;
           currentSection=label;
           formulaLineShown=false;
           if(label==="Answer")return null; // rendered separately below, hidden until tapped

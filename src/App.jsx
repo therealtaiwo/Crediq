@@ -5650,10 +5650,31 @@ function renderMathText(line,T){
 // conversion ever needs adjusting again, instead of two copies drifting apart.
 function ListenButton({text,T}){
   const[speaking,setSpeaking]=useState(false);
+  const queueRef=useRef([]);
+  const idxRef=useRef(0);
+
+  // Speaks the next queued chunk, chaining off onend. Splitting into small
+  // utterances (instead of one giant one) works around a real Android/Chrome
+  // limitation: the native TTS engine Chrome delegates to silently drops —
+  // no onerror, no onstart, nothing — any single utterance beyond roughly
+  // 2-4k characters. AI Tutor's per-question explanations are short enough
+  // to rarely hit that; full Topic Notes (multi-section, multi-paragraph)
+  // routinely blow past it, which is why only Notes' Listen button broke
+  // even though it's the exact same component/logic as AI Tutor's.
+  const speakNext=()=>{
+    if(idxRef.current>=queueRef.current.length){setSpeaking(false);return;}
+    const chunk=queueRef.current[idxRef.current];
+    idxRef.current+=1;
+    const u=new SpeechSynthesisUtterance(chunk);
+    u.rate=0.95;
+    u.onend=speakNext;
+    u.onerror=()=>setSpeaking(false);
+    window.speechSynthesis.speak(u);
+  };
 
   const speak=()=>{
     if(!window.speechSynthesis)return;
-    if(speaking){window.speechSynthesis.cancel();setSpeaking(false);return;}
+    if(speaking){window.speechSynthesis.cancel();setSpeaking(false);queueRef.current=[];idxRef.current=0;return;}
     window.speechSynthesis.cancel();
     let plain=text.replace(/\*\*/g,"").replace(/[🧠📐🪜✅⚠️⭐✏️]/g,"");
     for(let pass=0;pass<2;pass++){
@@ -5715,17 +5736,26 @@ function ListenButton({text,T}){
       .replace(/=/g," equals ")
       .replace(/\//g," over ")
       .replace(/\s{2,}/g," ");
-    const u=new SpeechSynthesisUtterance(plain);
-    u.rate=0.95;
-    u.onstart=()=>setSpeaking(true);
-    u.onend=()=>setSpeaking(false);
-    u.onerror=()=>setSpeaking(false);
+    // Split into speech-safe chunks at sentence/line boundaries, capped
+    // well under the ~2-4k silent-failure threshold described above.
+    const sentences=plain.match(/[^.!?\n]+[.!?\n]*/g)||[plain];
+    const chunks=[];
+    let current="";
+    for(const s of sentences){
+      if((current+s).length>200){
+        if(current.trim())chunks.push(current.trim());
+        current=s;
+      }else{
+        current+=s;
+      }
+    }
+    if(current.trim())chunks.push(current.trim());
+    queueRef.current=chunks;
+    idxRef.current=0;
+    setSpeaking(true);
     // Chrome/Android can silently drop an utterance queued in the same tick
-    // as cancel() — no onstart, no onerror, it just never plays. Longer text
-    // (full topic notes) hits this far more reliably than short per-question
-    // explanations, which is why AI Tutor looked fine while this didn't.
-    // Pushing speak() to the next tick avoids the race.
-    setTimeout(()=>window.speechSynthesis.speak(u),50);
+    // as cancel() — pushing the first chunk to the next tick avoids the race.
+    setTimeout(speakNext,50);
   };
 
   if(!text||!text.trim())return null;

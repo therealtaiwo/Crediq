@@ -5720,7 +5720,12 @@ function ListenButton({text,T}){
     u.onstart=()=>setSpeaking(true);
     u.onend=()=>setSpeaking(false);
     u.onerror=()=>setSpeaking(false);
-    window.speechSynthesis.speak(u);
+    // Chrome/Android can silently drop an utterance queued in the same tick
+    // as cancel() — no onstart, no onerror, it just never plays. Longer text
+    // (full topic notes) hits this far more reliably than short per-question
+    // explanations, which is why AI Tutor looked fine while this didn't.
+    // Pushing speak() to the next tick avoids the race.
+    setTimeout(()=>window.speechSynthesis.speak(u),50);
   };
 
   if(!text||!text.trim())return null;

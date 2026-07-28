@@ -8,7 +8,7 @@
 // IMPORTANT: bump CACHE_NAME on every deploy (v1 -> v2 -> v3...). It's the
 // only thing that makes the activate-time cleanup below actually delete the
 // previous version's cache instead of just keeping the same bucket forever.
-const CACHE_NAME = "crediq-v2";
+const CACHE_NAME = "crediq-v3";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

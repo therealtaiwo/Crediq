@@ -1299,6 +1299,42 @@ function checkNumericMismatch(q,ca){
 
   return null; // mixed option types — too ambiguous to auto-check
 }
+
+// ─── THEORY CONTENT AUDIT ────────────────────────────────────────────────────
+// The MCQ answer-key audit above requires q.options and skips everything else —
+// meaning theoryQuestions has NEVER actually been scanned by anything. This
+// catches the three ways a theory question breaks in a way that's invisible
+// until a student hits it live:
+//   1. Empty question text — the student sees nothing to answer.
+//   2. No gradable model answer anywhere (main answer AND every subQuestion
+//      answer are empty) — self-mark reveal has nothing to show, AI grading
+//      has nothing to compare against.
+//   3. Question text that's mostly raw numeric/table data with no
+//      instructional verb — a data table got stored as if it WERE the
+//      question, instead of being reference material attached to one.
+function checkTheoryContentIssues(q){
+  const issues=[];
+  const qt=(q.question||"").trim();
+  if(!qt){
+    issues.push("Empty question text");
+  }else{
+    const nonSpace=qt.replace(/\s/g,"");
+    const digitLike=(qt.match(/[\d.,]/g)||[]).length;
+    const digitRatio=nonSpace.length?digitLike/nonSpace.length:0;
+    const hasInstructionVerb=/\b(calculate|find|determine|using|given|state|explain|define|describe|evaluate|solve|show|prove|derive|compute|what|why|how|discuss|list|outline|identify|compare|analyse|analyze|write|draw|sketch|name|give|distinguish|differentiate|illustrate|account|justify)\b/i.test(qt);
+    if(digitRatio>0.55&&qt.length>15&&!hasInstructionVerb){
+      issues.push("Looks like raw data/table with no instruction");
+    }
+  }
+  const mainAnswerEmpty=!q.answer||!String(q.answer).trim();
+  const subAnswers=(q.subQuestions||[]).map(sq=>sq.answer);
+  const hasAnySubAnswer=subAnswers.some(a=>a&&String(a).trim());
+  if(mainAnswerEmpty&&!hasAnySubAnswer){
+    issues.push("No gradable model answer found");
+  }
+  return issues;
+}
+
 function optionCoverage(explanationTokenSet,optionText){
   const optTokens=tokenize(optionText);
   if(!optTokens.length)return 0;
@@ -8446,6 +8482,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
   const[semanticResults,setSemanticResults]=useState(null); // null=not run, [] = none flagged, [...] = possible mismatches
   const[semanticSkipped,setSemanticSkipped]=useState(0); // count of questions skipped as numeric/code-heavy (unreliable for word-overlap)
   const[numericResults,setNumericResults]=useState(null); // null=not run, [...] = confident mismatches found via digit/code matching
+  const[theoryAuditResults,setTheoryAuditResults]=useState(null); // null=not run, [...] = theory content problems (empty question, no gradable answer, data-dump-without-instruction)
   const isDesktop=useIsDesktop(900);
 
   const load=useCallback(async(isRefresh)=>{
@@ -8545,6 +8582,12 @@ function FounderDashboardScreen({onBack,T,showToast}){
       suggestedCorrect:r.suggestedCorrect,suggestedCorrectText:r.suggestedCorrectText,
       confidenceOrMethod:r.method,evidence:r.evidence,approved:"",
     }));
+    (theoryAuditResults||[]).forEach(r=>rows.push({
+      type:"theory-content",collection:"theoryQuestions",docId:r.id,subject:r.subject,topic:r.topic,
+      question:r.question,currentCorrect:"",currentCorrectText:"",
+      suggestedCorrect:"",suggestedCorrectText:"",
+      confidenceOrMethod:`${r.year||""}${r.paperNumber?" · Paper "+r.paperNumber:""}`,evidence:r.issues,approved:"",
+    }));
     if(!rows.length){show("Run the audit first — nothing to export yet.","error");return;}
     const headers=["type","collection","docId","subject","topic","question","currentCorrect","currentCorrectText","suggestedCorrect","suggestedCorrectText","confidenceOrMethod","evidence","approved"];
     const csv=[headers.join(",")].concat(
@@ -8565,13 +8608,28 @@ function FounderDashboardScreen({onBack,T,showToast}){
       const flagged=[];
       const semanticFlags=[];
       const numericFlags=[];
+      const theoryFlags=[];
       let skippedNumeric=0;
       for(const colName of["questions","theoryQuestions"]){
         let snap;
         try{ snap=await getDocs(collection(db,colName)); }catch{ continue; } // collection may not exist
         snap.docs.forEach(d=>{
           const q=d.data();
-          if(!q.options||typeof q.options!=="object")return; // theory Qs etc without MCQ options
+          if(!q.options||typeof q.options!=="object"){
+            // No MCQ options — this is a theory question. Run the separate
+            // content-quality check instead of just skipping it silently.
+            if(colName==="theoryQuestions"){
+              const issues=checkTheoryContentIssues(q);
+              if(issues.length){
+                theoryFlags.push({
+                  id:d.id,subject:q.subject||"",topic:q.topic||"",year:q.year||"",paperNumber:q.paperNumber||"",
+                  question:(q.question||"").slice(0,120),
+                  issues:issues.join(" · "),
+                });
+              }
+            }
+            return;
+          }
           const keys=Object.keys(q.options).map(k=>normAnswerKey(k));
           const ca=normAnswerKey(q.correctAnswer);
 
@@ -8645,6 +8703,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
       setAuditResults(flagged);
       setSemanticResults(semanticFlags);
       setNumericResults(numericFlags);
+      setTheoryAuditResults(theoryFlags);
       setSemanticSkipped(skippedNumeric);
     }catch(e){setAuditError(e?.message||"Audit failed — check Firestore rules/connection.");}
     finally{setAuditing(false);}
@@ -9673,7 +9732,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
                     cursor:auditing?"not-allowed":"pointer",opacity:auditing?0.6:1}}>
                     {auditing?"SCANNING…":"RUN AUDIT"}
                   </button>
-                  {(auditResults||semanticResults||numericResults)&&(
+                  {(auditResults||semanticResults||numericResults||theoryAuditResults)&&(
                     <button onClick={exportAuditCSV} className="btn-press" style={{
                       flex:1,padding:"14px 0",border:`1px solid ${T.gold}`,borderRadius:10,
                       background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,cursor:"pointer"}}>
@@ -9681,7 +9740,7 @@ function FounderDashboardScreen({onBack,T,showToast}){
                     </button>
                   )}
                 </div>
-                {(auditResults||semanticResults||numericResults)&&(
+                {(auditResults||semanticResults||numericResults||theoryAuditResults)&&(
                   <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:10,padding:"12px 14px",marginBottom:16}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",fontWeight:700,marginBottom:6}}>HOW TO BULK-FIX</div>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,lineHeight:1.8}}>
@@ -9803,6 +9862,42 @@ function FounderDashboardScreen({onBack,T,showToast}){
                         {numericResults.length>150&&(
                           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,textAlign:"center",padding:"12px 0"}}>
                             + {numericResults.length-150} more not shown — fix the top ones first, then re-run.
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* ── THEORY CONTENT AUDIT — first-ever scan of essay/structured questions ── */}
+                {theoryAuditResults!==null&&!auditError&&(
+                  <div style={{marginTop:28}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.14em",marginBottom:6}}>
+                      THEORY CONTENT CHECK · essay/structured questions
+                    </div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.muted}80`,marginBottom:14,lineHeight:1.7}}>
+                      Checks for empty question text, questions with no gradable model answer anywhere,
+                      and question text that looks like a raw data table with no actual instruction.
+                    </div>
+                    {theoryAuditResults.length===0?(
+                      <div style={{textAlign:"center",padding:"20px 20px",fontFamily:"'DM Mono',monospace",fontSize:11,color:"#4ade80"}}>
+                        ✓ No content problems found in theory questions.
+                      </div>
+                    ):(
+                      <>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.danger,marginBottom:12,fontWeight:700}}>
+                          ⚠ {theoryAuditResults.length} theory question{theoryAuditResults.length!==1?"s":""} with a content problem
+                        </div>
+                        {theoryAuditResults.slice(0,150).map((r,i)=>(
+                          <div key={i} style={{background:T.surface,border:"1px solid rgba(192,57,43,0.3)",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:T.muted,marginBottom:4}}>theoryQuestions / {r.id} · {r.subject} {r.topic?`· ${r.topic}`:""} {r.year?`· ${r.year}`:""}{r.paperNumber?` · Paper ${r.paperNumber}`:""}</div>
+                            <div style={{fontSize:12,color:T.text,marginBottom:6,lineHeight:1.5}}>{r.question||"(empty)"}{r.question.length>=120?"…":""}</div>
+                            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.danger}}>{r.issues}</div>
+                          </div>
+                        ))}
+                        {theoryAuditResults.length>150&&(
+                          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,textAlign:"center",padding:"12px 0"}}>
+                            + {theoryAuditResults.length-150} more not shown — fix the top ones first, then re-run.
                           </div>
                         )}
                       </>

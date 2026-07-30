@@ -104,6 +104,16 @@ const UserCache={
   clear(){try{localStorage.removeItem(USER_CACHE_KEY);}catch{}}
 };
 
+// ─── HISTORY CACHE — last-known-good fallback so a failed sessions query ──────
+// never renders as "brand new user" (this is what broke for Sayrah: the query
+// threw on a missing Firestore index, and with no fallback, history stayed
+// empty and the whole dashboard looked wiped even though nothing was lost).
+const HISTORY_CACHE_KEY="cq_history_v1";
+const HistoryCache={
+  get(uid){try{const r=localStorage.getItem(HISTORY_CACHE_KEY+"_"+uid);return r?JSON.parse(r):null;}catch{return null;}},
+  set(uid,sessions){try{localStorage.setItem(HISTORY_CACHE_KEY+"_"+uid,JSON.stringify(sessions));}catch{}}
+};
+
 // ─── JUPEB 001-004 SYLLABUS (official course units + keyword matchers) ────────
 const JUPEB_COURSES={
   "Physics":[
@@ -11476,6 +11486,7 @@ export default function App() {
         return at-bt;
       });
       setHistory(sessions);
+      HistoryCache.set(uid,sessions);
 
       // Fix 4: sync any sessions that failed to save last time (offline recovery)
       const pending=PendingSessions.getAll().filter(p=>p.uid===uid);
@@ -11498,7 +11509,11 @@ export default function App() {
           setHistory(sessions2);
         }
       }
-    }catch(e){console.error("Load history:",e);}
+    }catch(e){
+      console.error("Load history — falling back to cache:",e);
+      const cached=HistoryCache.get(uid);
+      if(cached&&cached.length)setHistory(cached);
+    }
     finally{setHistoryLoaded(true);}
   };
 

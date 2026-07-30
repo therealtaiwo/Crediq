@@ -10608,6 +10608,24 @@ function TheoryScreen({user,onEnd,onBack,T}){
                 background:"rgba(184,151,62,0.1)",border:"1px solid rgba(184,151,62,0.25)",borderRadius:20,padding:"4px 12px"}}>
                 ✨ AI GRADING · {aiCreditsLeft} CREDITS REMAINING
               </div>
+              {/* Sub-question text — was previously never shown in AI mode, meaning
+                  any question whose real content lives in subQuestions[] (the header-
+                  only main `question` field is the normal structure for many docs, not
+                  corruption) displayed as blank to AI-grading users. Read-only display
+                  here; self-mark buttons don't apply since AI grades the combined answer. */}
+              {sqs.length>0&&(
+                <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+                  {sqs.map(sq=>(
+                    <div key={sq.part} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
+                      </div>
+                      <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{sq.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
               <textarea value={answerText[q.id]||""} onChange={e=>setAnswerText(prev=>({...prev,[q.id]:e.target.value}))}
                 placeholder="Type your answer here…"
                 style={{width:"100%",minHeight:120,padding:"14px",borderRadius:10,border:`1px solid ${T.border}`,

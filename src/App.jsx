@@ -15,7 +15,7 @@ import {
 } from "firebase/auth";
 import {
   doc, getDoc, setDoc, updateDoc, addDoc,
-  collection, query, where, getDocs, getCountFromServer, serverTimestamp, increment, arrayUnion, limit,
+  collection, query, where, getDocs, getCountFromServer, serverTimestamp, increment, arrayUnion, limit, orderBy,
   onSnapshot, runTransaction
 } from "firebase/firestore";
 
@@ -11468,7 +11468,7 @@ export default function App() {
   const loadHistory=async uid=>{
     setHistoryLoaded(false);
     try{
-      const q=query(collection(db,"sessions"),where("userId","==",uid),limit(100));
+      const q=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
       const snap=await getDocs(q);
       const sessions=snap.docs.map(d=>d.data()).sort((a,b)=>{
         const at=a.createdAt?.toDate?.()?.getTime()||new Date(a.date).getTime();
@@ -11488,7 +11488,7 @@ export default function App() {
         }
         if(pending.length){
           // Re-fetch history to include newly synced sessions
-          const q2=query(collection(db,"sessions"),where("userId","==",uid),limit(100));
+          const q2=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
           const snap2=await getDocs(q2);
           const sessions2=snap2.docs.map(d=>d.data()).sort((a,b)=>{
             const at=a.createdAt?.toDate?.()?.getTime()||new Date(a.date).getTime();

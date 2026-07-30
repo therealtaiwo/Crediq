@@ -10209,6 +10209,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
   // found during testing — use find-by-snippet.cjs to get the exact docId,
   // never guess.
   const KNOWN_BROKEN_THEORY_IDS=useMemo(()=>new Set([
+    "PHY-2020-T005","CHE-2024-T004"
   ]),[]);
 
   // Live count of available questions for the current subject+year (paper is filtered

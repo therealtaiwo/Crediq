@@ -10201,13 +10201,14 @@ function TheoryScreen({user,onEnd,onBack,T}){
   const YEARS=[2019,2020,2021,2022,2024,2025];
   const subjectList=user.subjects||[];
 
-  // Docs with empty question text or raw untranscribed table data (theory
-  // content audit, 2026-07-29), plus confirmed OCR symbol-misread docs from
-  // the existing pattern-c scan (2026-07-30). Held out of live sessions
-  // until real content is re-added — see loadQs below. Not deleted from Firestore.
+  // Docs with confirmed broken question content (empty, raw table data,
+  // truncated, merged multiple questions, or OCR corruption), held out of
+  // live sessions until real content is restored. The original 116 found on
+  // 2026-07-29/30 are now fixed/deleted (see theory-fix-progress.csv) and
+  // removed from this list. Add new confirmed-broken docIds here as they're
+  // found during testing — use find-by-snippet.cjs to get the exact docId,
+  // never guess.
   const KNOWN_BROKEN_THEORY_IDS=useMemo(()=>new Set([
-    "AGR-2019-T001","AGR-2019-T002","AGR-2019-T003","AGR-2019-T004","AGR-2019-T005","AGR-2019-T006","AGR-2019-T007","AGR-2019-T008","AGR-2020-T002","AGR-2020-T004","AGR-2020-T005","AGR-2020-T006","AGR-2020-T007","AGR-2020-T008","AGR-2020-T011","BIO-2019-T003","BIO-2019-T004","BIO-2019-T005","BIO-2019-T006","BIO-2019-T007","BIO-2019-T008","BIO-2019-T010","BIO-2019-T010B","BIO-2019-T010C","BIO-2019-T010D","BIO-2019-T010E","BIO-2020-T001","BIO-2020-T003","BIO-2020-T005","BIO-2020-T006","BIO-2020-T007","BIO-2020-T008","CHE-2019-T002","CHE-2019-T005","CHE-2019-T007","CHE-2020-T001","CHE-2020-T002","CHE-2020-T003","CHE-2020-T004","CHE-2020-T005","CHE-2020-T006","CHE-2020-T007","CHE-2020-T008","CHE-2024-T001","CHE-2024-T002","CHE-2024-T003","CHE-2024-T005","CHE-2024-T006","CHE-2024-T007","CHE-2024-T008","ECO-2019-T002","ECO-2019-T004","ECO-2019-T005","ECO-2019-T006","ECO-2019-T007","ECO-2020-T002","ECO-2020-T004","ECO-2020-T005","ECO-2020-T006","ECO-2020-T007","GEO-2024-T001","GOV-2020-T001","GOV-2020-T002","GOV-2020-T003","GOV-2020-T004","GOV-2020-T005","GOV-2020-T007","GOV-2020-T008","MAT-2019-T000","MAT-2019-T001","MAT-2019-T003","MAT-2019-T004","MAT-2019-T005","MAT-2019-T006","MAT-2019-T007","MAT-2019-T008","MAT-2020-T001","MAT-2020-T002","MAT-2020-T003","MAT-2020-T004","MAT-2020-T005","MAT-2020-T006","MAT-2020-T007","MAT-2020-T008","MAT-2020-T009","MAT-2024-T002","MAT-2024-T003","MAT-2024-T005","MAT-2024-T006","MAT-2024-T007","MAT-2024-T008","MAT-2024-T009","MAT-2024-T010","PHY-2019-T001","PHY-2019-T002","PHY-2019-T003","PHY-2019-T004","PHY-2019-T004B","PHY-2019-T006","PHY-2019-T007","PHY-2019-T008","PHY-2020-T001","PHY-2020-T002","PHY-2020-T003","PHY-2020-T004","PHY-2020-T006","PHY-2020-T007","PHY-2020-T008","PHY-2024-T001","PHY-2024-T007","PHY-2024-T008","PHY-2025-T001",
-    "MAT-2019-T002","MAT-2019-T009","PHY-2020-T000","CHE-2019-T001"
   ]),[]);
 
   // Live count of available questions for the current subject+year (paper is filtered
@@ -10594,7 +10595,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
               </button>
             ):(
               <div style={{marginBottom:16,padding:"10px 14px",background:"rgba(184,151,62,0.06)",border:"1px dashed rgba(184,151,62,0.3)",borderRadius:8,fontSize:12,color:T.muted,display:"flex",alignItems:"center",gap:8}}>
-                <Eye size={14} color={T.gold}/> This question includes a diagram — refer to your past question booklet.
+                <Eye size={14} color={T.gold}/> This question refers to a diagram we haven't added yet — do your best from the text, or skip this one for now.
               </div>
             )
           )}

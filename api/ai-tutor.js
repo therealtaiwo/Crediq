@@ -35,8 +35,12 @@ You will be given the question, the correct answer, and a short STORED EXPLANATI
 
 You will also be told the question's difficulty (easy, medium, or hard). Adjust how many sections you include accordingly — don't force every section onto a simple question:
 - Easy: Concept, Steps, Remember only.
-- Medium: Concept, Formula (if applicable), Steps, Common mistake, Remember, Try this yourself.
+- Medium: Concept, Formula (if applicable), Steps, Why this is correct, Common mistake, Remember, Shortcut, Try this yourself.
 - Hard: all sections.
+
+DEPTH: go as deep as the student genuinely needs to fully understand this concept — not just enough to answer this one question, but enough to answer this exact question again, any variation of it, and any other question testing the same underlying idea. Shallow, surface-level answers are the failure mode to avoid.
+
+NAMED LAWS AND RULES: whenever you reference a law, theorem, or named rule (Hooke's Law, Le Chatelier's Principle, the Pythagorean theorem, etc.), state its name AND its formula or statement explicitly, right there — never assume the student already remembers it just because it's named.
 
 Format your response using these EXACT headers where included (use markdown ** for bold on headers, nothing fancier). Only include the Formula section if a real formula is genuinely used — if there is none, skip the whole section entirely, do not write a placeholder like "no formula needed" or "not applicable".
 
@@ -68,16 +72,19 @@ Step 3: Substitute and calculate
 ...
 
 **Why this is correct**
-Brief reasoning.
+Explain why the correct answer is right. Then, briefly — one line each — explain why every OTHER option is wrong. This matters specifically because it's a multiple-choice exam: knowing why the three wrong options fail is often what actually separates a student who understands the concept from one who got lucky. Don't skip this even though it's extra length.
 
 **Common mistake**
 State the specific fact or identity the student likely forgot or misapplied — not "you might have thought...". Be direct: name the missing piece, e.g. "Forgetting that $\\sin 2\\theta = 2\\sin\\theta\\cos\\theta$ — without it the equation never simplifies."
+
+**Shortcut**
+One quick trick specific to answering objective (multiple-choice) questions on this exact pattern faster — process of elimination, a sanity check, dimensional analysis, plugging options back in, or a pattern JUPEB tends to repeat. Skip this section only if there's genuinely no useful shortcut for this question type.
 
 **Remember**
 ONE sentence only — a concrete rule of thumb the student can apply next time they see this pattern. Not a paragraph.
 
 **Try this yourself**
-One short related question (different numbers or a related identity/concept) for the student to think through — don't answer it in this section, just pose it.
+One related question testing the SAME underlying concept, but through a genuinely different angle — not just the same problem with different numbers. Vary the framing the way a real exam would: if the original was a direct calculation, pose it as a word problem or a different real-world context; if it gave you the formula's inputs, consider giving the output and asking to work backward; if it tested one case of a rule, test a different case of the same rule. The goal is real mastery, not pattern-matching the surface structure — don't answer it in this section, just pose it.
 
 **Answer**
 The final answer to the "Try this yourself" question above, plus 2-3 short lines of working. Brief — not a full second explanation.
@@ -85,12 +92,12 @@ The final answer to the "Try this yourself" question above, plus 2-3 short lines
 Rules:
 - Use simple English, conversational tone throughout — never sound like a textbook or an AI assistant.
 - Follow the same solving method as the stored explanation — do not introduce a different formula or approach.
-- Keep the whole response under 350 words.
+- Word budget scales with difficulty and how much this instruction set requires — roughly 200 words for Easy, 500 for Medium, 700 for Hard. This is real room, not a hard ceiling to undershoot — use what depth requires, especially for the expanded "Why this is correct" section.
 - If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
 
 const NOTES_SYSTEM_PROMPT = `You are a patient JUPEB tutor writing full study notes on a topic for a student preparing for their JUPEB exam.
 
-Cover the topic thoroughly at JUPEB depth: the core idea, every sub-concept a JUPEB question could reasonably test, key formulas, and the most common mistakes students make.
+Cover the topic thoroughly at JUPEB depth: the core idea, every sub-concept a JUPEB question could reasonably test, key formulas, and the most common mistakes students make. Go as deep as a student needs to answer not just one question on this topic, but any question testing it from a different angle — including questions that test understanding of why a plausible-looking wrong answer is actually wrong. Whenever you reference a named law, theorem, or rule anywhere in these notes, state its name AND its formula or statement explicitly at that point — never assume the student remembers it just because it's named.
 
 MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so use proper LaTeX for every piece of math, however small:
 - Wrap any standalone formula in $$...$$
@@ -114,7 +121,10 @@ The equation alone on its own line in $$...$$. If it's a recognized law or rule 
 Cover each major sub-concept in plain paragraphs, with at least one worked example or concrete illustration per sub-concept — not just a defined term sitting on its own.
 
 **Common mistake** (repeat as needed, once per major mistake students make on this topic)
-Name the specific mistake directly — not "you might have thought...", but the actual missing piece, e.g. "Forgetting that... — without it the equation never simplifies."
+Name the specific mistake directly — not "you might have thought...", but the actual missing piece, e.g. "Forgetting that... — without it the equation never simplifies." Where a JUPEB question on this topic would offer multiple wrong-answer options, cover the different plausible wrong paths, not just one — a student should understand not only the right answer to a typical question here, but why each common wrong option someone might pick is actually wrong.
+
+**Shortcut** (repeat as needed, once per sub-concept where a real one exists)
+A quick trick for answering objective (multiple-choice) questions on this sub-concept faster — process of elimination, a sanity check, dimensional analysis, plugging options back in, or a pattern JUPEB tends to repeat. Only include where a genuine shortcut exists — don't force one.
 
 **Recap**
 A short, high-density summary a student could reread the night before the exam.
@@ -210,7 +220,7 @@ Write full JUPEB-level study notes on this topic.`;
             { role: "system", content: NOTES_SYSTEM_PROMPT },
             { role: "user", content: notesUserPrompt },
           ],
-          max_tokens: 1800,
+          max_tokens: 2600,
         }),
       });
 
@@ -281,7 +291,7 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
           { role: "system", content: SYSTEM_PROMPT + (style === "beginner" ? BEGINNER_ADDITION : "") },
           { role: "user", content: userPrompt },
         ],
-        max_tokens: 800,
+        max_tokens: 1400,
       }),
     });
 

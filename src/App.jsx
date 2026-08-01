@@ -1368,6 +1368,32 @@ function getAllQuestionsForSubject(QB,subject) {
   if (!QB[subject]) return [];
   return Object.values(QB[subject]).flat().filter(isUsableQuestion);
 }
+// Looks a set of question ids up across every subject in QB, regardless of
+// which subject/year config produced them originally — used to rebuild an
+// interrupted session's exact question set from just its ids.
+function findQuestionsByIds(QB,ids){
+  if(!ids||!ids.length)return[];
+  const byId={};
+  Object.keys(QB).forEach(subj=>{
+    getAllQuestionsForSubject(QB,subj).forEach(q=>{if(q.id!=null&&byId[q.id]===undefined)byId[q.id]=q;});
+  });
+  return ids.map(id=>byId[id]).filter(Boolean);
+}
+
+// ─── Interrupted-session recovery (localStorage) ──────────────────────────
+// A practice/exam session is saved after every answer/navigation so closing
+// the app mid-session (not just backgrounding it) doesn't lose progress.
+const RESUME_SESSION_KEY="crediq_resume_session_v1";
+const RESUME_SESSION_MAX_AGE_MS=12*60*60*1000; // 12h — older than this, treat as stale
+function saveResumeSnapshot(snap){
+  try{localStorage.setItem(RESUME_SESSION_KEY,JSON.stringify(snap));}catch{}
+}
+function loadResumeSnapshot(){
+  try{const raw=localStorage.getItem(RESUME_SESSION_KEY);return raw?JSON.parse(raw):null;}catch{return null;}
+}
+function clearResumeSnapshot(){
+  try{localStorage.removeItem(RESUME_SESSION_KEY);}catch{}
+}
 function getQuestions(QB,subject,year) {
   const qs=(QB[subject]&&QB[subject][String(year)]) ? QB[subject][String(year)] : [];
   return qs.filter(isUsableQuestion);
@@ -1990,7 +2016,7 @@ const buildCSS = T => `
   .fi5{animation:fadeUp 0.25s 0.25s ease-out both;}
 
   /* ── Utility ────────────────────────────────────────────────────────────── */
-  .screen-enter{animation:screenIn .2s ease-out forwards;will-change:opacity,transform;}
+  .screen-enter{animation:screenIn .2s ease-out forwards;}
   .grade-reveal-a{animation:gradeReveal .6s .1s cubic-bezier(.16,1,.3,1) both,gradeGlow 1.4s .7s ease both;}
   .grade-reveal-b,.grade-reveal{animation:gradeReveal .5s .1s cubic-bezier(.16,1,.3,1) both;}
   .grade-reveal-f{animation:fadeIn .4s ease both;}
@@ -3752,7 +3778,7 @@ function DashNotifPanel({notifications,readIds,onClose,T}){
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setDark,T,showToast,streak,onUpgrade,onUpdateUser}) {
+function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setDark,T,showToast,streak,onUpgrade,onUpdateUser,resumeSession,onResumeSession,onDiscardSession}) {
   const readiness=useMemo(()=>calcReadiness(history),[history]);
   const weakTopics=useMemo(()=>calcWeakTopics(history),[history]);
   const topicStatus=useMemo(()=>calcTopicStatus(history),[history]);
@@ -4199,6 +4225,21 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
 
   return (
     <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:90}}>
+
+      {resumeSession&&(
+        <div style={{margin:"12px 16px 0",padding:"12px 14px",background:"rgba(184,151,62,0.08)",border:`1px solid ${T.gold}44`,borderRadius:12,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+          <div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:`${T.gold}99`,letterSpacing:"0.1em",marginBottom:2}}>UNFINISHED SESSION</div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,color:T.text}}>
+              {resumeSession.subject==="mixed"?"Mixed":resumeSession.subject} · Q{Math.min((resumeSession.current||0)+1,resumeSession.questions.length)}/{resumeSession.questions.length}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,flexShrink:0}}>
+            <button onClick={onDiscardSession} className="btn-press" style={{padding:"8px 12px",border:`1px solid ${T.border}`,borderRadius:8,background:"transparent",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:9,cursor:"pointer"}}>DISCARD</button>
+            <button onClick={onResumeSession} className="btn-press" style={{padding:"8px 14px",border:"none",borderRadius:8,background:T.gold,color:"#0a1410",fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,cursor:"pointer"}}>RESUME</button>
+          </div>
+        </div>
+      )}
 
       {/* ── HEADER ── */}
       <div style={{padding:"14px 20px 10px",borderBottom:`1px solid ${T.navBorder}`,background:T.navBg,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -5242,11 +5283,11 @@ function ScientificCalc({T,onClose}){
 }
 
 // ─── EXAM SCREEN ──────────────────────────────────────────────────────────────
-function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffset=0}) {
+function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffset=0,initialCurrent=0,initialAnswers={}}) {
   const {questions,subject,year,mode,timeLimit,startTime}=config;
-  const [current,setCurrent]=useState(0);
-  const [answers,setAnswers]=useState({});
-  const [timeLeft,setTimeLeft]=useState(timeLimit*60);
+  const [current,setCurrent]=useState(initialCurrent);
+  const [answers,setAnswers]=useState(initialAnswers);
+  const [timeLeft,setTimeLeft]=useState(()=>Math.max(0,timeLimit*60-Math.floor((Date.now()-startTime)/1000)));
   const [showNav,setShowNav]=useState(false);
   const [showQuit,setShowQuit]=useState(false);
   const [showReport,setShowReport]=useState(false);
@@ -5258,6 +5299,19 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
 
   // Keep answersRef current so the auto-submit timer always reads latest answers
   useEffect(()=>{answersRef.current=answers;},[answers]);
+
+  // Save enough to fully reconstruct this session if the app gets closed mid-way —
+  // question ids (not the full objects) plus current position and answers so far.
+  useEffect(()=>{
+    if(!questions.length)return;
+    saveResumeSnapshot({
+      uid:user?.uid||null,
+      subject,year,mode,timeLimit,startTime,
+      questionIds:questions.map(q=>q.id),
+      current,answers,
+      savedAt:Date.now(),
+    });
+  },[current,answers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // B.4 — Cognitive Signals: objective, observed-only. No interpretation yet.
   const currentRef=useRef(current);
@@ -5311,6 +5365,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
   // handleSubmit reads from ref so it's safe to call from stale closures (e.g. timer)
   const handleSubmit=useCallback(()=>{
     clearInterval(timerRef.current);
+    clearResumeSnapshot();
     flushCurrentQuestionTime();
     const submitTimestamp=new Date().toISOString();
     const latestAnswers=answersRef.current;
@@ -5356,6 +5411,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
       const usedSoFar=(user?.questionsToday||0)+Object.keys(answers).length+1;
       if(usedSoFar>FREE_DAILY_LIMIT){
         clearInterval(timerRef.current);
+        clearResumeSnapshot();
         flushCurrentQuestionTime();
         const finalAnswers={...answers,[current]:opt};
         const duration=Math.round((Date.now()-startTime)/1000);
@@ -5395,7 +5451,7 @@ function ExamScreen({config,user,onEnd,onQuit,onLimitHit,dark,setDark,T,navOffse
 
   return (
     <div style={{minHeight:"100dvh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
-      {showQuit&&<ConfirmQuit onConfirm={()=>{clearInterval(timerRef.current);track("exam_abandoned",{uid:user?.uid});onQuit();}} onCancel={()=>setShowQuit(false)} answered={answeredCount} total={totalQ} T={T}/>}
+      {showQuit&&<ConfirmQuit onConfirm={()=>{clearInterval(timerRef.current);clearResumeSnapshot();track("exam_abandoned",{uid:user?.uid});onQuit();}} onCancel={()=>setShowQuit(false)} answered={answeredCount} total={totalQ} T={T}/>}
       {showReport&&<ReportModal question={q} user={user} onClose={()=>setShowReport(false)} onSubmit={data=>track("question_reported",{uid:user?.uid,...data})} T={T}/>}
       <AnimatePresence>{showCalc&&<ScientificCalc T={T} onClose={()=>setShowCalc(false)}/>}</AnimatePresence>
 
@@ -11437,6 +11493,8 @@ export default function App() {
   const [QB,setQB]=useState({});
   const [dark,setDark]=useState(true);
   const [examConfig,setExamConfig]=useState(null);
+  const [examInitial,setExamInitial]=useState(null); // {current,answers} for a resumed session
+  const [resumeCandidate,setResumeCandidate]=useState(null); // validated interrupted-session snapshot, or null
   const [examResult,setExamResult]=useState(null);
   const [showPremiumGate,setShowPremiumGate]=useState(false);
   const [showSessionMismatch,setShowSessionMismatch]=useState(false);
@@ -11941,7 +11999,34 @@ export default function App() {
     if(!Object.keys(QB).length&&user?.subjects){
       await loadQuestions(user.subjects);
     }
+    setExamInitial(null); // starting fresh — don't carry over a previous resume position
     setExamConfig(cfg);setScreen("exam");
+  };
+
+  // Detect an interrupted session left over from before the app was last closed.
+  // Only needs QB loaded (to rebuild the actual question objects from stored ids)
+  // and a matching logged-in user.
+  useEffect(()=>{
+    if(!user?.uid||!Object.keys(QB).length){return;}
+    const snap=loadResumeSnapshot();
+    if(!snap||snap.uid!==user.uid){setResumeCandidate(null);return;}
+    if(Date.now()-(snap.savedAt||0)>RESUME_SESSION_MAX_AGE_MS){clearResumeSnapshot();setResumeCandidate(null);return;}
+    const qs=findQuestionsByIds(QB,snap.questionIds||[]);
+    if(!qs.length){clearResumeSnapshot();setResumeCandidate(null);return;}
+    setResumeCandidate({...snap,questions:qs});
+  },[user?.uid,QB]);
+
+  const handleResumeSession=()=>{
+    if(!resumeCandidate)return;
+    const{questions,subject,year,mode,timeLimit,startTime,current,answers}=resumeCandidate;
+    setExamInitial({current:current||0,answers:answers||{}});
+    setExamConfig({questions,subject,year,mode,timeLimit,startTime});
+    setResumeCandidate(null);
+    setScreen("exam");
+  };
+  const handleDiscardSession=()=>{
+    clearResumeSnapshot();
+    setResumeCandidate(null);
   };
 
   // ── Layer 1: API verifies Paystack ref (secret key stays safe server-side)
@@ -12144,7 +12229,7 @@ export default function App() {
 
           {screen==="dashboard"&&user&&(
             !historyLoaded?<DashboardSkeleton T={T}/>:
-            <DashboardScreen user={user} history={history} historyLoaded={historyLoaded} QB={QB} onNav={handleNav} onLogout={handleLogout} dark={dark} setDark={setDark} T={T} showToast={show} streak={streak} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>
+            <DashboardScreen user={user} history={history} historyLoaded={historyLoaded} QB={QB} onNav={handleNav} onLogout={handleLogout} dark={dark} setDark={setDark} T={T} showToast={show} streak={streak} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}} resumeSession={resumeCandidate} onResumeSession={handleResumeSession} onDiscardSession={handleDiscardSession}/>
           )}
 
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
@@ -12154,7 +12239,7 @@ export default function App() {
           {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
           {screen==="notes"&&user&&<NotesScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
-          {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T}/>}
+          {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T} initialCurrent={examInitial?.current||0} initialAnswers={examInitial?.answers||{}}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}
           {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}

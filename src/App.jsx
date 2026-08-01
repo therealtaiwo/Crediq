@@ -5814,52 +5814,74 @@ function ListenButton({text,T}){
   );
 }
 
-function AiTutorFormattedText({text,T}){
+function AiTutorFormattedText({text,T,collapsible=false}){
   const[showAnswer,setShowAnswer]=useState(false);
+  const[openSet,setOpenSet]=useState(()=>new Set([0]));
   useKatexReady(); // kicks off KaTeX CDN load on mount; re-renders once ready
-  // Normalize the WHOLE response before splitting into lines — see
-  // preprocessMathText's comment for why this must happen pre-split.
   const normalizedText=preprocessMathText(text);
   const lines=normalizedText.split("\n").filter(l=>l.trim().length>0);
-  let currentSection=null;
-  let formulaLineShown=false;
-
   const answerBlock=normalizedText.includes("**Answer**")?normalizedText.split("**Answer**")[1].trim():null;
+
+  const sections=[];
+  let current=null;
+  let formulaLineShown=false;
+  for(const raw of lines){
+    const trimmed=raw.trim();
+    const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
+    if(isHeader){
+      const label=trimmed.slice(2,-2);
+      formulaLineShown=false;
+      if(label==="Answer"){current=null;continue;}
+      const style=AI_TUTOR_SECTION_STYLE[label]||{icon:"▸",color:T.gold};
+      current={label,icon:style.icon,color:style.color,bodyLines:[]};
+      sections.push(current);
+      continue;
+    }
+    if(current===null)continue;
+    current.bodyLines.push(trimmed);
+  }
+
+  const toggleSection=idx=>setOpenSet(s=>{
+    const next=new Set(s);
+    next.has(idx)?next.delete(idx):next.add(idx);
+    return next;
+  });
+
+  const renderBody=(sec)=>{
+    formulaLineShown=false;
+    return sec.bodyLines.map((line,i)=>{
+      if(sec.label==="Formula"&&!formulaLineShown){
+        formulaLineShown=true;
+        const clean=line.startsWith("$$")&&line.endsWith("$$")?line.slice(2,-2):line;
+        return(
+          <div key={i} style={{textAlign:"center",fontSize:17,fontWeight:700,color:T.gold,padding:"10px 8px",margin:"4px 0 10px",background:`${T.gold}0d`,borderRadius:8,letterSpacing:"0.01em",overflowX:"auto"}}>
+            <MathBlock latex={clean}/>
+          </div>
+        );
+      }
+      return(
+        <div key={i} style={{lineHeight:1.55,marginBottom:4}}>
+          {renderMathText(line,T)}
+        </div>
+      );
+    });
+  };
 
   return(
     <div style={{fontSize:13,color:T.text}}>
       <ListenButton text={normalizedText} T={T}/>
-      {lines.map((line,i)=>{
-        const trimmed=line.trim();
-        const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
-        if(isHeader){
-          const label=trimmed.slice(2,-2);
-          currentSection=label;
-          formulaLineShown=false;
-          if(label==="Answer")return null; // rendered separately below, hidden until tapped
-          const style=AI_TUTOR_SECTION_STYLE[label]||{icon:"▸",color:T.gold};
-          return(
-            <div key={i} style={{marginTop:i===0?0:16,marginBottom:6,fontWeight:700,color:style.color,fontSize:12,letterSpacing:"0.02em",display:"flex",alignItems:"center",gap:6}}>
-              <span>{style.icon}</span><span>{label}</span>
-            </div>
-          );
-        }
-        if(currentSection==="Answer")return null; // handled by answerBlock below
-        // Formula section: only the equation itself (first line) gets the
-        // prominent box — a glossary line defining symbols right after it
-        // (e.g. "where F = force, m = mass") reads as normal prose.
-        if(currentSection==="Formula"&&!formulaLineShown){
-          formulaLineShown=true;
-          const clean=trimmed.startsWith("$$")&&trimmed.endsWith("$$")?trimmed.slice(2,-2):trimmed;
-          return(
-            <div key={i} style={{textAlign:"center",fontSize:17,fontWeight:700,color:T.gold,padding:"10px 8px",margin:"4px 0 10px",background:`${T.gold}0d`,borderRadius:8,letterSpacing:"0.01em",overflowX:"auto"}}>
-              <MathBlock latex={clean}/>
-            </div>
-          );
-        }
+      {sections.map((sec,idx)=>{
+        const isOpen=!collapsible||openSet.has(idx);
         return(
-          <div key={i} style={{lineHeight:1.55,marginBottom:4}}>
-            {renderMathText(line,T)}
+          <div key={idx} style={collapsible?{marginTop:idx===0?0:10,borderBottom:idx<sections.length-1?`1px solid ${T.border}`:"none",paddingBottom:idx<sections.length-1?10:0}:undefined}>
+            <div
+              onClick={collapsible?()=>toggleSection(idx):undefined}
+              style={{marginTop:collapsible?0:(idx===0?0:16),marginBottom:6,fontWeight:700,color:sec.color,fontSize:12,letterSpacing:"0.02em",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:collapsible?"pointer":"default"}}
+            >
+              <span style={{display:"flex",alignItems:"center",gap:6}}><span>{sec.icon}</span><span>{sec.label}</span></span>
+              {collapsible&&<ChevronRight size={14} style={{transform:isOpen?"rotate(90deg)":"none",transition:"transform .15s",color:T.muted}}/>}
+            </div>
+            {isOpen&&renderBody(sec)}
           </div>
         );
       })}
@@ -6011,7 +6033,7 @@ function TopicNotesButton({user,subject,topic,T}){
         <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.gold,marginBottom:10}}>
           FULL NOTES · {topic.toUpperCase()}
         </div>
-        <AiTutorFormattedText text={notesText} T={T}/>
+        <AiTutorFormattedText text={notesText} T={T} collapsible={true}/>
         <CopyToNotesButton user={user} content={notesText} subject={subject} topic={topic} T={T}/>
       </div>
     );

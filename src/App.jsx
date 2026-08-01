@@ -10584,9 +10584,25 @@ function TheoryScreen({user,onEnd,onBack,T}){
             </div>
           )}
 
-          {/* Diagram — full scanned page, tap to view fullscreen instead of dumping inline */}
+          {/* Diagram — full scanned page(s), tap to view fullscreen instead of
+              dumping inline. Most questions have one image (diagramUrl); a
+              few genuinely need more than one (diagramUrls array) — render
+              one button per image in that case instead of only ever showing
+              the first/singular one. */}
           {q.has_diagram&&(
-            q.diagramUrl?(
+            (q.diagramUrls&&q.diagramUrls.length>1)?(
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+                {q.diagramUrls.map((url,i)=>(
+                  <button key={url} onClick={()=>setLightboxUrl(url)}
+                    style={{width:"100%",padding:"12px 14px",background:"rgba(184,151,62,0.06)",
+                      border:"1px dashed rgba(184,151,62,0.35)",borderRadius:8,cursor:"pointer",
+                      display:"flex",alignItems:"center",gap:8,textAlign:"left"}}>
+                    <Eye size={14} color={T.gold} style={{flexShrink:0}}/>
+                    <span style={{fontSize:12,color:T.gold,fontWeight:500}}>This question includes a diagram — tap to view page {i+1} of {q.diagramUrls.length}</span>
+                  </button>
+                ))}
+              </div>
+            ):q.diagramUrl?(
               <button onClick={()=>setLightboxUrl(q.diagramUrl)}
                 style={{width:"100%",marginBottom:16,padding:"12px 14px",background:"rgba(184,151,62,0.06)",
                   border:"1px dashed rgba(184,151,62,0.35)",borderRadius:8,cursor:"pointer",

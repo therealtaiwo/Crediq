@@ -6767,7 +6767,7 @@ function ReferenceBankScreen({user,onBack,dark,setDark,T}){
   );
 }
 
-function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
+function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onResumeConsumed}) {
   const userSubjects=user.subjects||[];
   const[selSub,setSelSub]=useState(userSubjects[0]||"");
   const[session,setSession]=useState(null); // array of questions once started
@@ -6783,6 +6783,36 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
   const[showFormulaBank,setShowFormulaBank]=useState(false);
   const qbLoaded=Object.keys(QB).length>0;
 
+  // Ends the session everywhere it can end (finished the last question, or
+  // exited manually) — centralized so the resume snapshot always gets cleared
+  // and can never resurrect a session the student actually finished.
+  const endSession=()=>{clearResumeSnapshot();setSession(null);};
+
+  // Apply an interrupted AI Tutor session handed down from the dashboard's
+  // resume flow (or auto-resumed silently at the App level on a quick reload).
+  useEffect(()=>{
+    if(resumeSession&&!session){
+      setSession(resumeSession.questions);
+      setSelSub(resumeSession.subject);
+      setIdx(resumeSession.idx||0);
+      setSelectedOpt(resumeSession.selectedOpt??null);
+      setRevealed(!!resumeSession.revealed);
+      onResumeConsumed&&onResumeConsumed();
+    }
+  },[resumeSession]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save enough to fully reconstruct this session if the app gets closed mid-way.
+  useEffect(()=>{
+    if(!session||!session.length)return;
+    saveResumeSnapshot({
+      uid:user?.uid||null,
+      subject:selSub,mode:"tutor",
+      questionIds:session.map(q=>q.id),
+      current:idx,selectedOpt,revealed,
+      savedAt:Date.now(),
+    });
+  },[session,idx,selectedOpt,revealed]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startSession=()=>{
     const all=getAllQuestionsForSubject(QB,selSub);
     if(!all||all.length===0)return;
@@ -6796,7 +6826,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
   };
 
   const next=()=>{
-    if(idx+1>=session.length){setSession(null);return;}
+    if(idx+1>=session.length){endSession();return;}
     setIdx(idx+1);setSelectedOpt(null);setRevealed(false);
   };
 
@@ -6884,7 +6914,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade}) {
       )}</AnimatePresence>
       <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <button className="btn-press" onClick={()=>setSession(null)} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Exit</button>
+          <button className="btn-press" onClick={endSession} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Exit</button>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(247,243,236,0.5)"}}>{idx+1} / {session.length}</span>
             <button className="btn-press" onClick={()=>setShowCalc(true)} title="Calculator" style={{background:"none",border:"none",color:"rgba(247,243,236,0.45)",cursor:"pointer",padding:4,fontSize:15,lineHeight:1}}>🧮</button>
@@ -11508,6 +11538,7 @@ export default function App() {
   const [examInitial,setExamInitial]=useState(null); // {current,answers} for a resumed session
   const [resumeCandidate,setResumeCandidate]=useState(null); // validated interrupted-session snapshot, or null
   const [drillResume,setDrillResume]=useState(null); // {questions,subject,current,answers,startTime} for a resumed drill
+  const [tutorResume,setTutorResume]=useState(null); // {questions,subject,idx,selectedOpt,revealed} for a resumed AI Tutor session
   const [examResult,setExamResult]=useState(null);
   const [showPremiumGate,setShowPremiumGate]=useState(false);
   const [showSessionMismatch,setShowSessionMismatch]=useState(false);
@@ -12021,7 +12052,10 @@ export default function App() {
   // background reload) and the manual banner tap (older session, user's choice).
   const applyResumeCandidate=candidate=>{
     const{questions,subject,year,mode,timeLimit,startTime,current,answers}=candidate;
-    if(mode==="drill"){
+    if(mode==="tutor"){
+      setTutorResume({questions,subject,idx:current,selectedOpt:candidate.selectedOpt,revealed:candidate.revealed});
+      setScreen("tutor");
+    }else if(mode==="drill"){
       // Route through DrillScreen itself so drill_completed tracking and the
       // mode:"Drill" result tag still happen the same way a normal drill does —
       // duplicating that logic here would drift out of sync over time.
@@ -12214,6 +12248,7 @@ export default function App() {
     // (weekly cap for Drill, per-tap check for AI Tutor) gates the actual action
     if(s==="editprofile"){setScreen("editprofile");return;}
     if(s==="drill")setDrillResume(null); // deliberate fresh start — don't let a leftover resume leak in
+    if(s==="tutor")setTutorResume(null);
     // Lazy load questions when Practice or Drill is tapped
     if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){
       loadQuestions(user.subjects);
@@ -12280,7 +12315,7 @@ export default function App() {
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)} resumeSession={drillResume} onResumeConsumed={()=>setDrillResume(null)}/>}
-          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
+          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)} resumeSession={tutorResume} onResumeConsumed={()=>setTutorResume(null)}/>}
           {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
           {screen==="notes"&&user&&<NotesScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T} initialCurrent={examInitial?.current||0} initialAnswers={examInitial?.answers||{}}/>}

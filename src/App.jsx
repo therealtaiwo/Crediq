@@ -1385,6 +1385,7 @@ function findQuestionsByIds(QB,ids){
 // the app mid-session (not just backgrounding it) doesn't lose progress.
 const RESUME_SESSION_KEY="crediq_resume_session_v1";
 const RESUME_SESSION_MAX_AGE_MS=12*60*60*1000; // 12h — older than this, treat as stale
+const RESUME_AUTO_THRESHOLD_MS=30*60*1000; // 30min — under this, resume silently instead of asking
 function saveResumeSnapshot(snap){
   try{localStorage.setItem(RESUME_SESSION_KEY,JSON.stringify(snap));}catch{}
 }
@@ -6178,7 +6179,7 @@ function CopyToNotesButton({user,content,subject,topic,T}){
 }
 
 // ─── DRILL SCREEN ─────────────────────────────────────────────────────────────
-function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUpgrade}) {
+function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUpgrade,resumeSession,onResumeConsumed}) {
   const weakTopics=useMemo(()=>calcWeakTopics(history),[history]);
   const userSubjects=user.subjects||[];
   const [drillMode,setDrillMode]=useState("weak");
@@ -6189,8 +6190,19 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
   const [selectedSubject,setSelectedSubject]=useState(userSubjects[0]||"");
   const [pendingDrill,setPendingDrill]=useState(null);
   const [confidence,setConfidence]=useState(null);
+  const [resumeMeta,setResumeMeta]=useState(null); // {current,answers,startTime} for a resumed drill
   const qbLoaded=Object.keys(QB).length>0;
   const capStatus=user?.isPremium?null:DrillCap.check(user.uid);
+
+  // Apply an interrupted drill session handed down from the dashboard's resume banner
+  useEffect(()=>{
+    if(resumeSession&&!startedWith){
+      setStartedWith(resumeSession.questions);
+      setSelectedSubject(resumeSession.subject);
+      setResumeMeta({current:resumeSession.current||0,answers:resumeSession.answers||{},startTime:resumeSession.startTime});
+      onResumeConsumed&&onResumeConsumed();
+    }
+  },[resumeSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const subjectMeta=SUBJECT_META[selSub]||{color:"#B8973E",icon:"BKS"};
   const courses=JUPEB_COURSES[selSub]||[];
@@ -6209,7 +6221,7 @@ function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUp
   ,[weakTopics,userSubjects]);
 
   if(startedWith){
-    return <ExamScreen config={{questions:startedWith,subject:selectedSubject||userSubjects[0]||"Drill",year:"mixed",mode:"drill",timeLimit:15,startTime:Date.now()}} user={user} onEnd={r=>{track("drill_completed",{uid:user?.uid,pct:r.pct});onEnd({...r,mode:"Drill",confidence});setConfidence(null);}} onQuit={()=>{setStartedWith(null);setConfidence(null);}} onLimitHit={async partialResult=>{if(partialResult){await onEnd({...partialResult,mode:"Drill",confidence});setConfidence(null);}else{setStartedWith(null);setConfidence(null);}}} dark={dark} setDark={setDark} T={T} navOffset={65}/>;
+    return <ExamScreen config={{questions:startedWith,subject:selectedSubject||userSubjects[0]||"Drill",year:"mixed",mode:"drill",timeLimit:15,startTime:resumeMeta?.startTime||Date.now()}} initialCurrent={resumeMeta?.current||0} initialAnswers={resumeMeta?.answers||{}} user={user} onEnd={r=>{track("drill_completed",{uid:user?.uid,pct:r.pct});onEnd({...r,mode:"Drill",confidence});setConfidence(null);setResumeMeta(null);}} onQuit={()=>{setStartedWith(null);setConfidence(null);setResumeMeta(null);}} onLimitHit={async partialResult=>{if(partialResult){await onEnd({...partialResult,mode:"Drill",confidence});setConfidence(null);setResumeMeta(null);}else{setStartedWith(null);setConfidence(null);setResumeMeta(null);}}} dark={dark} setDark={setDark} T={T} navOffset={65}/>;
   }
 
   const startDrill=async(questions,label,subjectName)=>{
@@ -11495,6 +11507,7 @@ export default function App() {
   const [examConfig,setExamConfig]=useState(null);
   const [examInitial,setExamInitial]=useState(null); // {current,answers} for a resumed session
   const [resumeCandidate,setResumeCandidate]=useState(null); // validated interrupted-session snapshot, or null
+  const [drillResume,setDrillResume]=useState(null); // {questions,subject,current,answers,startTime} for a resumed drill
   const [examResult,setExamResult]=useState(null);
   const [showPremiumGate,setShowPremiumGate]=useState(false);
   const [showSessionMismatch,setShowSessionMismatch]=useState(false);
@@ -12003,26 +12016,56 @@ export default function App() {
     setExamConfig(cfg);setScreen("exam");
   };
 
-  // Detect an interrupted session left over from before the app was last closed.
-  // Only needs QB loaded (to rebuild the actual question objects from stored ids)
-  // and a matching logged-in user.
+  // applyResumeCandidate is the single place that actually re-enters a saved
+  // session — used both for the silent auto-resume path (quick app-switch,
+  // background reload) and the manual banner tap (older session, user's choice).
+  const applyResumeCandidate=candidate=>{
+    const{questions,subject,year,mode,timeLimit,startTime,current,answers}=candidate;
+    if(mode==="drill"){
+      // Route through DrillScreen itself so drill_completed tracking and the
+      // mode:"Drill" result tag still happen the same way a normal drill does —
+      // duplicating that logic here would drift out of sync over time.
+      setDrillResume({questions,subject,current,answers,startTime});
+      setScreen("drill");
+    }else{
+      setExamInitial({current:current||0,answers:answers||{}});
+      setExamConfig({questions,subject,year,mode,timeLimit,startTime});
+      setScreen("exam");
+    }
+    setResumeCandidate(null);
+  };
+
+  // Detect an interrupted session left over from before the app was last closed —
+  // most commonly the phone reclaiming memory from a backgrounded tab (switching
+  // to WhatsApp and back), which silently reloads the page. Only needs QB loaded
+  // (to rebuild the actual question objects from stored ids) and a matching user.
+  // autoResumeAttemptedRef ensures this only ever fires once per app load, so it
+  // can't repeatedly yank the student back to an old session while they're
+  // deliberately browsing the dashboard after a real resume/discard.
+  const autoResumeAttemptedRef=useRef(false);
   useEffect(()=>{
-    if(!user?.uid||!Object.keys(QB).length){return;}
+    if(!user?.uid||!Object.keys(QB).length||autoResumeAttemptedRef.current)return;
     const snap=loadResumeSnapshot();
-    if(!snap||snap.uid!==user.uid){setResumeCandidate(null);return;}
-    if(Date.now()-(snap.savedAt||0)>RESUME_SESSION_MAX_AGE_MS){clearResumeSnapshot();setResumeCandidate(null);return;}
+    if(!snap||snap.uid!==user.uid)return;
+    const age=Date.now()-(snap.savedAt||0);
+    if(age>RESUME_SESSION_MAX_AGE_MS){clearResumeSnapshot();return;}
     const qs=findQuestionsByIds(QB,snap.questionIds||[]);
-    if(!qs.length){clearResumeSnapshot();setResumeCandidate(null);return;}
-    setResumeCandidate({...snap,questions:qs});
+    if(!qs.length){clearResumeSnapshot();return;}
+    autoResumeAttemptedRef.current=true;
+    const candidate={...snap,questions:qs};
+    if(age<=RESUME_AUTO_THRESHOLD_MS){
+      // Recent enough this was almost certainly just a quick app-switch —
+      // go straight back in, no banner, no extra tap.
+      applyResumeCandidate(candidate);
+    }else{
+      // Old enough the student may have moved on deliberately — ask first.
+      setResumeCandidate(candidate);
+    }
   },[user?.uid,QB]);
 
   const handleResumeSession=()=>{
     if(!resumeCandidate)return;
-    const{questions,subject,year,mode,timeLimit,startTime,current,answers}=resumeCandidate;
-    setExamInitial({current:current||0,answers:answers||{}});
-    setExamConfig({questions,subject,year,mode,timeLimit,startTime});
-    setResumeCandidate(null);
-    setScreen("exam");
+    applyResumeCandidate(resumeCandidate);
   };
   const handleDiscardSession=()=>{
     clearResumeSnapshot();
@@ -12170,6 +12213,7 @@ export default function App() {
     // AI Tutor and Drill are both free to enter — their own internal logic
     // (weekly cap for Drill, per-tap check for AI Tutor) gates the actual action
     if(s==="editprofile"){setScreen("editprofile");return;}
+    if(s==="drill")setDrillResume(null); // deliberate fresh start — don't let a leftover resume leak in
     // Lazy load questions when Practice or Drill is tapped
     if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){
       loadQuestions(user.subjects);
@@ -12235,7 +12279,7 @@ export default function App() {
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
           {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
-          {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)}/>}
+          {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)} resumeSession={drillResume} onResumeConsumed={()=>setDrillResume(null)}/>}
           {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
           {screen==="notes"&&user&&<NotesScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}

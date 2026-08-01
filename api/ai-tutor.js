@@ -59,7 +59,7 @@ MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so
 **Concept**
 One short sentence — the core idea only, no throat-clearing like "This question is testing whether you remember...". Just state the idea directly, e.g. "Convert every trig function into sine and cosine first."
 
-**Formula** (omit this entire section, header and all, if the question has no real formula — never write a placeholder line here)
+**Formula: <specific name>** (e.g. **Formula: Newton's Second Law**, **Formula: Combined Gas Law** — never the bare word "Formula" alone. If the formula has no standard name, use a short descriptive one, e.g. **Formula: Area of a Triangle**. Omit this entire section, header and all, if the question has no real formula — never write a placeholder line here)
 The formula alone, on its own line, wrapped in $$...$$, nothing else on that line. Immediately below it, on its own line, define every symbol used: "where $F$ = force, $m$ = mass, $a$ = acceleration" — plain words, no units unless the units themselves matter to the method. Skip this definition line only for symbols so standard they need no explanation (e.g. plain x, y in coordinate geometry).
 
 **Steps**
@@ -115,8 +115,8 @@ Format your response using markdown ** for bold on headers — nothing else. Nev
 **Core Concept**
 One or two plain sentences stating the governing idea of this topic, the way you'd say it out loud to a class.
 
-**Formula** (repeat this exact header for each distinct formula the topic needs — omit entirely, header and all, if the topic has no real formula)
-The equation alone on its own line in $$...$$. If it's a recognized law or rule (Hooke's Law, Faraday's Law, Newton's Laws, etc.), name it. Immediately below, on its own line, define every symbol plainly.
+**Formula: <specific name>** (repeat this pattern for each distinct formula the topic needs — e.g. **Formula: Newton's Second Law**, then later **Formula: Conservation of Momentum**. Never repeat the bare word "Formula" — every occurrence must carry its own specific name, so a student scanning collapsed sections can tell them apart. If a formula has no standard name, use a short descriptive one, e.g. **Formula: Resultant of Two Vectors**. Omit entirely, header and all, if the topic has no real formula)
+The equation alone on its own line in $$...$$. Immediately below, on its own line, define every symbol plainly.
 
 Cover each major sub-concept in plain paragraphs, with at least one worked example or concrete illustration per sub-concept — not just a defined term sitting on its own.
 

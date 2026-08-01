@@ -5480,7 +5480,7 @@ const AI_TUTOR_EXCLUDED_TOPICS=["Genetics"];
 // regenerated on next open — no manual cache-wiping needed. Old cached
 // docs predating this field entirely (undefined) will also correctly
 // miss the check and regenerate.
-const AI_TUTOR_PROMPT_VERSION=2;
+const AI_TUTOR_PROMPT_VERSION=3;
 const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 
 async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
@@ -5842,11 +5842,17 @@ function AiTutorFormattedText({text,T,collapsible=false}){
     const trimmed=raw.trim();
     const isHeader=/^\*\*[^*]+\*\*$/.test(trimmed);
     if(isHeader){
-      const label=trimmed.slice(2,-2);
+      const raw2=trimmed.slice(2,-2);
+      // Supports "**Formula**" (old, still works) and "**Formula: Newton's
+      // Second Law**" (new) — category drives icon/styling/special-render
+      // behavior (e.g. the LaTeX box below), title is what's shown on screen.
+      const colonIdx=raw2.indexOf(":");
+      const category=(colonIdx===-1?raw2:raw2.slice(0,colonIdx)).trim();
+      const title=(colonIdx===-1?raw2:raw2.slice(colonIdx+1)).trim();
       formulaLineShown=false;
-      if(label==="Answer"){current=null;continue;}
-      const style=AI_TUTOR_SECTION_STYLE[label]||{icon:"▸",color:T.gold};
-      current={label,icon:style.icon,color:style.color,bodyLines:[]};
+      if(category==="Answer"){current=null;continue;}
+      const style=AI_TUTOR_SECTION_STYLE[category]||{icon:"▸",color:T.gold};
+      current={label:title||category,category,icon:style.icon,color:style.color,bodyLines:[]};
       sections.push(current);
       continue;
     }
@@ -5863,7 +5869,7 @@ function AiTutorFormattedText({text,T,collapsible=false}){
   const renderBody=(sec)=>{
     formulaLineShown=false;
     return sec.bodyLines.map((line,i)=>{
-      if(sec.label==="Formula"&&!formulaLineShown){
+      if(sec.category==="Formula"&&!formulaLineShown){
         formulaLineShown=true;
         const clean=line.startsWith("$$")&&line.endsWith("$$")?line.slice(2,-2):line;
         return(

@@ -5474,16 +5474,26 @@ const AI_TUTOR_FREE_DAILY_CAP=3; // free users get this many real tries/day befo
 // and found unreliable specifically on that question type. Whole topic
 // excluded until questions are tagged more granularly.
 const AI_TUTOR_EXCLUDED_TOPICS=["Genetics"];
+// Bump this any time api/ai-tutor.js's prompt changes meaningfully (new
+// requirements, deeper explanations, etc). Every cached explanation/note
+// whose stored version doesn't match is treated as stale and silently
+// regenerated on next open — no manual cache-wiping needed. Old cached
+// docs predating this field entirely (undefined) will also correctly
+// miss the check and regenerate.
+const AI_TUTOR_PROMPT_VERSION=2;
 const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 
 async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return{blocked:"excluded-topic"};
 
   const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
+  const versionField=style==="beginner"?"aiTutorPromptVersionBeginner":"aiTutorPromptVersion";
   const qRef=doc(db,"questions",questionId);
   const qSnap=await getDoc(qRef);
-  const cached=qSnap.data()?.[cacheField];
-  if(cached)return{text:cached,cached:true};
+  const qData=qSnap.data();
+  const cached=qData?.[cacheField];
+  const cacheIsCurrent=qData?.[versionField]===AI_TUTOR_PROMPT_VERSION;
+  if(cached&&cacheIsCurrent)return{text:cached,cached:true};
 
   // Client-side pre-check: fast, avoids an unnecessary network round-trip
   // when we already know locally the user is over their cap. This is NOT
@@ -5518,7 +5528,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   if(!data.text)return{blocked:"generation-failed"};
 
   try{
-    await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString()});
+    await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION});
     await setDoc(counterRef,{count:increment(1)},{merge:true});
   }catch(err){console.error("Failed to cache AI Tutor result:",err);}
 
@@ -5537,8 +5547,10 @@ async function getTopicNotes({user,subject,topic}){
   const noteId=`${subject}_${topicSlug(topic)}`.replace(/[\/\.#\[\]]/g,"_");
   const noteRef=doc(db,"topicNotes",noteId);
   const noteSnap=await getDoc(noteRef);
-  const cachedContent=noteSnap.exists()?noteSnap.data()?.content:null;
-  if(cachedContent)return{text:cachedContent,cached:true};
+  const noteData=noteSnap.exists()?noteSnap.data():null;
+  const cachedContent=noteData?.content;
+  const cacheIsCurrent=noteData?.aiTutorPromptVersion===AI_TUTOR_PROMPT_VERSION;
+  if(cachedContent&&cacheIsCurrent)return{text:cachedContent,cached:true};
 
   if(!user?.isPremium)return{blocked:"premium-required"};
 
@@ -5568,6 +5580,7 @@ async function getTopicNotes({user,subject,topic}){
     await setDoc(noteRef,{
       content:data.text,subject,topic:topic||"",courseCode,
       generatedAt:new Date().toISOString(),
+      aiTutorPromptVersion:AI_TUTOR_PROMPT_VERSION,
     },{merge:true});
   }catch(err){console.error("Failed to cache topic notes:",err);}
 

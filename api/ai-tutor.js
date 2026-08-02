@@ -22,6 +22,51 @@ const MODEL = "llama-3.3-70b-versatile"; // switched from 8B after it made an
 // TPM — comfortably above the 60/day AI Tutor cap since generations happen
 // one at a time, not in a tight batch loop.
 
+const FALLBACK_MODEL = "openai/gpt-oss-120b"; // used when the primary model
+// gets rate-limited (429), for BOTH Notes and Explain mode. Deliberately not a
+// smaller/weaker model like llama-3.1-8b-instant (which previously made an
+// independent arithmetic error even with the correct stored explanation as
+// grounding, back when it was tried as the primary model) — this is a
+// different 120B-class model with its OWN separate free-tier rate-limit
+// bucket (30 RPM / 8K TPM / 200K TPD), entirely independent of
+// llama-3.3-70b-versatile's (~12K TPM / 100K TPD). So when the 70B bucket
+// gets burst-exhausted, this one is untouched — same fix as a smaller
+// fallback, without trading away depth/quality for it. Explain mode still
+// also has the stored explanation always visible regardless, so this is
+// belt-and-suspenders there, not the only safety net.
+
+// Calls Groq with the primary model; on a 429 specifically, retries once with
+// the fallback model. Any other failure (400, 500, etc.) is returned as-is —
+// retrying with a different model won't fix a bad request or a Groq outage.
+async function callGroqWithFallback({ apiKey, systemPrompt, userPrompt, maxTokens, allowFallback }) {
+  const callOnce = async model => fetch(GROQ_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: maxTokens,
+    }),
+  });
+
+  let res = await callOnce(MODEL);
+  let usedFallback = false;
+
+  if (res.status === 429 && allowFallback) {
+    console.warn(`Groq 429 on ${MODEL} — retrying with ${FALLBACK_MODEL}`);
+    res = await callOnce(FALLBACK_MODEL);
+    usedFallback = true;
+  }
+
+  return { res, usedFallback };
+}
+
 const BEGINNER_ADDITION = `
 
 The student has asked for the SIMPLER version of this explanation. Rewrite with these adjustments:
@@ -95,9 +140,15 @@ Rules:
 - Word budget scales with difficulty and how much this instruction set requires — roughly 200 words for Easy, 500 for Medium, 700 for Hard. This is real room, not a hard ceiling to undershoot — use what depth requires, especially for the expanded "Why this is correct" section.
 - If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
 
-const NOTES_SYSTEM_PROMPT = `You are a patient JUPEB tutor writing full study notes on a topic for a student preparing for their JUPEB exam.
+const NOTES_SYSTEM_PROMPT = `You are writing a full study chapter on one topic for a JUPEB student — not a quick summary, not a cheat sheet. Write like the best tutor they've ever had is sitting with them and has all the time in the world to make sure they truly get it.
 
-Cover the topic thoroughly at JUPEB depth: the core idea, every sub-concept a JUPEB question could reasonably test, key formulas, and the most common mistakes students make. Go as deep as a student needs to answer not just one question on this topic, but any question testing it from a different angle — including questions that test understanding of why a plausible-looking wrong answer is actually wrong. Whenever you reference a named law, theorem, or rule anywhere in these notes, state its name AND its formula or statement explicitly at that point — never assume the student remembers it just because it's named.
+CRITICAL CONTEXT — read this before writing a single word: JUPEB is an A-Level equivalent (UK A-Level / first-year university foundation), NOT JAMB. JAMB rewards surface pattern-recognition on multiple-choice trivia. JUPEB expects real conceptual mastery — a student who can derive, explain, and apply, not just recall. If your instinct is to write a JAMB-style quick summary, override it. Go deeper than feels necessary. Assume the student wants everything they'd need so they never have to look this topic up anywhere else — this note should function as a complete replacement for their textbook chapter, not a supplement to it.
+
+VOICE: Write directly to the student, second person, warm and personal — like you're explaining this one-on-one to someone you actually care about doing well. Never drift into cold, distant, third-person textbook prose ("students should note that...", "it can be observed that..."). At the same time, the actual CONTENT must have full textbook rigor and completeness — personal in tone, exhaustive in substance. Imagine a great human tutor's warmth fused with a proper textbook's completeness — that fusion is exactly the target. Never sound like a quick AI-assistant answer.
+
+DEFINE EVERYTHING: never use a term without defining it the first time it appears, even ones that feel "basic" or "standard" — a real textbook doesn't assume the reader already knows what viscosity, an isotope, or a stoichiometric ratio is; it tells them, briefly and clearly, right there. This applies to every technical noun in these notes, not just formula symbols. Whenever you reference a named law, theorem, or rule (Hooke's Law, Le Chatelier's Principle, the Pythagorean theorem, etc.), state its name AND its formula or statement explicitly, right there — never assume the student already remembers it just because it's named.
+
+DEPTH — the most important instruction in this entire prompt: go deep enough that the student understands WHY something is true, not just THAT it's true. Where a result can be derived or reasoned through, do that — briefly, but really — rather than presenting it as a fact to memorize. Cover every sub-concept a JUPEB question could reasonably test on this topic, including the subtle distinctions and edge cases that separate real understanding from memorized pattern-matching. Note how this topic connects to other topics in the syllabus where a genuine connection exists — real understanding is relational, not a list of isolated facts. Write in full — do not compress a genuinely broad topic to fit a shorter response. If the topic has six sub-concepts that each deserve real explanation, give all six real explanation — don't fold four of them into one summary line to save space.
 
 MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so use proper LaTeX for every piece of math, however small:
 - Wrap any standalone formula in $$...$$
@@ -110,28 +161,43 @@ MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so
 - Greek letters and symbols: \\theta \\lambda \\pi \\mu \\omega \\Delta \\times \\div \\pm \\approx \\leq \\geq \\neq
 - Never use plain-text math shorthand like n_f^2, x^2 without braces, a/b for fractions, or spelled words like "theta" — always the LaTeX command.
 
-Format your response using markdown ** for bold on headers — nothing else. Never use #, ##, or any other markdown heading syntax; only **bold text alone on its own line** counts as a header on the client. Use these headers, choosing only the ones that genuinely apply:
+Format your response using markdown ** for bold on headers — nothing else. Never use #, ##, or any other markdown heading syntax; only **bold text alone on its own line** counts as a header on the client. Use these headers, choosing only the ones that genuinely apply, and repeat any of them as many times as the topic genuinely needs:
 
-**Core Concept**
-One or two plain sentences stating the governing idea of this topic, the way you'd say it out loud to a class.
+**Why this topic matters**
+Two or three sentences, spoken directly to the student, on where this topic sits in the bigger picture and why JUPEB tests it the way it does. Skip the throat-clearing — get to something genuinely useful immediately.
 
-**Formula: <specific name>** (repeat this pattern for each distinct formula the topic needs — e.g. **Formula: Newton's Second Law**, then later **Formula: Conservation of Momentum**. Never repeat the bare word "Formula" — every occurrence must carry its own specific name, so a student scanning collapsed sections can tell them apart. If a formula has no standard name, use a short descriptive one, e.g. **Formula: Resultant of Two Vectors**. Omit entirely, header and all, if the topic has no real formula)
-The equation alone on its own line in $$...$$. Immediately below, on its own line, define every symbol plainly.
+**Key terms you need first**
+Before diving in, define every important term this topic depends on, in plain language, one per line: "**<term>** — <clear, plain-English definition>". Don't skip ones that feel obvious — that habit is exactly what leaves gaps. This section is what cheap study notes usually skip, and it's often the real reason a topic feels confusing.
 
-Cover each major sub-concept in plain paragraphs, with at least one worked example or concrete illustration per sub-concept — not just a defined term sitting on its own.
+Cover each major sub-concept in its own clearly-introduced section, titled naturally in bold based on what the sub-concept actually is (not a fixed generic label). For each one:
+- Explain the idea properly, in your own words, the way you'd say it out loud to someone in front of you.
+- Where the result can be reasoned through or derived, walk through that reasoning — don't just state the conclusion.
+- Give at least one full worked example with real numbers or a real case, not an abstract description. For calculation-heavy sub-concepts (Physics, Chemistry, Mathematics, Further Mathematics, Economics, Accounting, Agriculture-quantitative topics), give two worked examples covering genuinely different cases or variations of the same idea, not the same case with different numbers — one example is rarely enough to see how a formula or method actually generalizes.
+- Note the JUPEB-specific angle: how this sub-concept actually tends to get tested, and what a plausible wrong answer would look like and why it's wrong.
+
+**Formula: <specific name>** (repeat this pattern for each distinct formula the topic needs — e.g. **Formula: Newton's Second Law**, then later **Formula: Conservation of Momentum**. Never repeat the bare word "Formula" alone — every occurrence must carry its own specific name. If a formula has no standard name, use a short descriptive one, e.g. **Formula: Resultant of Two Vectors**. Omit entirely, header and all, if the topic has no real formula)
+The equation alone on its own line in $$...$$. Immediately below, on its own line, define every symbol plainly — including units where the units matter to using the formula correctly. If the formula can be derived from something simpler the student already knows, show that derivation briefly before stating the final form.
 
 **Common mistake** (repeat as needed, once per major mistake students make on this topic)
-Name the specific mistake directly — not "you might have thought...", but the actual missing piece, e.g. "Forgetting that... — without it the equation never simplifies." Where a JUPEB question on this topic would offer multiple wrong-answer options, cover the different plausible wrong paths, not just one — a student should understand not only the right answer to a typical question here, but why each common wrong option someone might pick is actually wrong.
+Name the specific mistake directly — not "you might have thought...", but the actual missing piece, e.g. "Forgetting that... — without it the equation never simplifies." Where a JUPEB question on this topic would offer multiple wrong-answer options, cover the different plausible wrong paths, not just one.
 
 **Shortcut** (repeat as needed, once per sub-concept where a real one exists)
-A quick trick for answering objective (multiple-choice) questions on this sub-concept faster — process of elimination, a sanity check, dimensional analysis, plugging options back in, or a pattern JUPEB tends to repeat. Only include where a genuine shortcut exists — don't force one.
+A quick trick for answering objective (multiple-choice) questions on this sub-concept faster — process of elimination, a sanity check, dimensional analysis, plugging options back in, or a pattern JUPEB tends to repeat. Only include where a genuine shortcut exists.
+
+**How this connects**
+One short paragraph on how this topic links to other JUPEB topics in the same subject (or across subjects, where genuinely relevant) — real understanding is built on these connections, not isolated facts.
+
+**Practice problems**
+Write 3 to 5 problems covering the different sub-concepts above from angles genuinely different from the worked examples already given — not the same case with different numbers. For calculation-heavy subjects, make these real quantitative problems the student has to actually work through, not "explain the concept" prompts. Immediately below each problem, give its full worked answer, step by step — this is standalone study material the student reads alone, not a live quiz, so withholding the answer only wastes their time.
 
 **Recap**
-A short, high-density summary a student could reread the night before the exam.
+A genuinely useful, high-density summary a student could reread the night before the exam and have the whole topic snap back into place — a real compressed version of everything above, not a repeat of the introduction.
 
 Rules:
-- Simple, conversational English throughout — never sound like a textbook or an AI assistant.
-- This is meant to be thorough — noticeably longer than a single-question explanation is expected and fine. Don't pad with filler, but don't compress real content just to save space either.`;
+- Warm, direct, second-person voice throughout — talk TO the student, never ABOUT students in the abstract third person.
+- This must read like a real textbook chapter in depth and completeness, while sounding like someone genuinely invested in this particular student getting it — not an AI assistant giving a quick answer, and not a cold, distant textbook either.
+- Length is not capped by convention — write as long as the topic genuinely requires for full A-level depth. A narrow topic might reasonably run 800 words; a broad one might need 2500+. Match the length to what's actually needed, never to a habitual word count.
+- Don't pad with filler or repetition — every sentence should be doing real work. Depth means more real content, not more words saying the same thing.`;
 
 function sanitizeLatexDelimiters(text) {
   // Defense in depth: the model is instructed to only ever use $$...$$ / $...$,
@@ -208,20 +274,19 @@ ${scopeLine}
 
 Write full JUPEB-level study notes on this topic.`;
 
-      const aiRes = await fetch(GROQ_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          messages: [
-            { role: "system", content: NOTES_SYSTEM_PROMPT },
-            { role: "user", content: notesUserPrompt },
-          ],
-          max_tokens: 2600,
-        }),
+      // Bumped max_tokens from 2600 to 4000 for real textbook-depth notes.
+      // Trade-off: Groq's free tier for llama-3.3-70b-versatile is rate-limited
+      // by TOKENS PER MINUTE (recently ~12K, has been as low as 6K), not just
+      // requests — input + output both count. A single deep generation can eat
+      // most of that minute's budget on its own. allowFallback:true means a
+      // 429 here retries once against FALLBACK_MODEL's separate rate-limit
+      // bucket instead of failing outright — see FALLBACK_MODEL above.
+      const { res: aiRes, usedFallback } = await callGroqWithFallback({
+        apiKey,
+        systemPrompt: NOTES_SYSTEM_PROMPT,
+        userPrompt: notesUserPrompt,
+        maxTokens: 5000,
+        allowFallback: true,
       });
 
       if (!aiRes.ok) {
@@ -235,6 +300,7 @@ Write full JUPEB-level study notes on this topic.`;
 
       const aiData = await aiRes.json();
       const notesText = aiData?.choices?.[0]?.message?.content;
+      if (usedFallback) console.warn(`Notes served by fallback model (${FALLBACK_MODEL}) for ${subject} / ${topic}`);
 
       if (!notesText) {
         res.status(502).json({ error: "Empty AI response" });
@@ -279,20 +345,12 @@ Stored explanation (the correct, tested method — build on this, do not replace
 
 Help the student understand why the correct answer is right${studentAnswer ? ", and address the specific misconception behind picking their wrong answer" : ""}.`;
 
-    const aiRes = await fetch(GROQ_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT + (style === "beginner" ? BEGINNER_ADDITION : "") },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 1400,
-      }),
+    const { res: aiRes, usedFallback } = await callGroqWithFallback({
+      apiKey,
+      systemPrompt: SYSTEM_PROMPT + (style === "beginner" ? BEGINNER_ADDITION : ""),
+      userPrompt,
+      maxTokens: 1400,
+      allowFallback: true,
     });
 
     if (!aiRes.ok) {
@@ -307,6 +365,7 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
 
     const aiData = await aiRes.json();
     const text = aiData?.choices?.[0]?.message?.content;
+    if (usedFallback) console.warn(`Explain served by fallback model (${FALLBACK_MODEL}) for ${subject} / ${topic || "N/A"}`);
 
     if (!text) {
       res.status(502).json({ error: "Empty AI response", fallbackToStored: true });

@@ -10589,7 +10589,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
           <button onClick={onBack} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}><ChevronLeft size={22}/></button>
           <div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.14em",marginBottom:2}}>THEORY PRACTICE</div>
-            <div style={{fontSize:18,fontWeight:700,letterSpacing:-0.3}}>Essay & Structured Questions</div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700,letterSpacing:-0.3,color:T.text}}>Essay & Structured Questions</div>
           </div>
         </div>
 
@@ -10722,8 +10722,11 @@ function TheoryScreen({user,onEnd,onBack,T}){
           {/* Year/Paper badge */}
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginBottom:14}}>{q.year} · Paper {q.paperNumber||1}{q.totalMarks?` · ${q.totalMarks} marks`:""}</div>
 
-          {/* Question text — only show if not empty */}
-          {q.question&&q.question.trim()&&(
+          {/* Question text — only show as one block when there are no
+              sub-parts; when subQuestions exist, this same text is already
+              fully covered by the per-part cards below, so showing both was
+              pure duplication. */}
+          {sqs.length===0&&q.question&&q.question.trim()&&(
             <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,whiteSpace:"pre-wrap"}}>
               {renderMathText(q.question,T)}
             </div>
@@ -10781,7 +10784,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
                     <div key={sq.part} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
                         <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?(sq.marks===1?" mark":" marks"):""}</span>
                       </div>
                       <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{sq.text}</div>
                     </div>
@@ -10829,7 +10832,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
                     {/* Sub-question header */}
                     <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                       <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?(sq.marks===1?" mark":" marks"):""}</span>
                     </div>
                     <div style={{fontSize:14,lineHeight:1.6,color:T.text,marginBottom:12}}>{sq.text}</div>
 

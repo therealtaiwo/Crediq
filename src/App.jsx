@@ -10335,6 +10335,8 @@ function TheoryScreen({user,onEnd,onBack,T}){
   const[followUpUsed,setFollowUpUsed]=useState({});      // qId -> true, one follow-up only
   const[followUpText,setFollowUpText]=useState({});      // qId -> clarification string
   const[followUpLoading,setFollowUpLoading]=useState(false);
+  const[showCalc,setShowCalc]=useState(false);
+  const[showReport,setShowReport]=useState(false);
   const fileInputRef=useRef(null);
 
   const YEARS=[2019,2020,2021,2022,2024,2025];
@@ -10682,6 +10684,8 @@ function TheoryScreen({user,onEnd,onBack,T}){
 
     return(
       <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
+        <AnimatePresence>{showCalc&&<ScientificCalc T={T} onClose={()=>setShowCalc(false)}/>}</AnimatePresence>
+        {showReport&&<ReportModal question={q} user={user} onClose={()=>setShowReport(false)} onSubmit={data=>track("question_reported",{uid:user?.uid,...data})} T={T}/>}
         {/* Header */}
         <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
@@ -10694,6 +10698,8 @@ function TheoryScreen({user,onEnd,onBack,T}){
                 </button>
               )}
             </div>
+            <button className="btn-press" onClick={()=>{document.activeElement?.blur();setShowCalc(true);}} title="Calculator" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:4,fontSize:15,lineHeight:1}}>🧮</button>
+            <button className="btn-press" onClick={()=>setShowReport(true)} title="Flag this question" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:4}}><Flag size={14}/></button>
             <div className={timerClass} style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:timerColor,minWidth:52,textAlign:"right"}}>{fmtTime(displayTime)}</div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>

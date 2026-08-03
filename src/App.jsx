@@ -6142,7 +6142,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
 // topic (not just the current question), so it's offered independently of
 // whether the student has tapped AI Tutor at all. Premium-only, no free-cap
 // tier (unlike AI Tutor's 3/day) since it's a heavier, cached-once value-add.
-function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc,keywords,hideCopyToNotes}){
+function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc,keywords,onUpgrade}){
   const[state,setState]=useState("idle"); // idle | loading | shown | paywall | blocked
   const[notesText,setNotesText]=useState(null);
   const[blockedReason,setBlockedReason]=useState(null);
@@ -6170,8 +6170,16 @@ function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc
 
   if(state==="paywall"){
     return(
-      <div style={{marginTop:10,fontSize:11,color:T.muted,fontStyle:"italic"}}>
-        Full topic notes are a Premium feature.
+      <div style={{marginTop:10,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.gold}33`,textAlign:"center"}}>
+        <div style={{fontSize:12.5,color:T.text,lineHeight:1.5,marginBottom:12}}>
+          Full topic notes are a Premium feature.
+        </div>
+        <button onClick={()=>onUpgrade&&onUpgrade("notes_paywall")} className="btn-press"
+          style={{width:"100%",padding:"12px 16px",borderRadius:10,border:"none",
+            background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",
+            color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+          Unlock Full Notes →
+        </button>
       </div>
     );
   }
@@ -6901,7 +6909,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
         )}</AnimatePresence>
         <AnimatePresence>{showNotes&&(
           <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
-            <SyllabusScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
+            <SyllabusScreen user={user} onBack={()=>setShowNotes(false)} T={T} onUpgrade={onUpgrade}/>
           </motion.div>
         )}</AnimatePresence>
       </div>
@@ -6924,7 +6932,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
       )}</AnimatePresence>
       <AnimatePresence>{showNotes&&(
         <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
-          <SyllabusScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
+          <SyllabusScreen user={user} onBack={()=>setShowNotes(false)} T={T} onUpgrade={onUpgrade}/>
         </motion.div>
       )}</AnimatePresence>
       <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
@@ -6976,7 +6984,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
             )}
 
             <AiTutorButton user={user} question={q} questionId={q.id} studentAnswer={selectedOpt} onUpgrade={onUpgrade} T={T}/>
-            <TopicNotesButton user={user} subject={q.subject} topic={q.topic} T={T}/>
+            <TopicNotesButton user={user} subject={q.subject} topic={q.topic} T={T} onUpgrade={onUpgrade}/>
 
             <BtnPrimary onClick={next} T={T}>
               {idx+1>=session.length?"Finish Session":"Next Question →"}
@@ -7094,7 +7102,7 @@ function getSyllabusFor(subject){
 // topic, each topic opening into TopicNotesButton's cached/AI-generated
 // full-topic notes — the same generation path used elsewhere, so a topic
 // opened here and one opened mid-drill share the exact same cache.
-function SyllabusScreen({user,onBack,T}) {
+function SyllabusScreen({user,onBack,T,onUpgrade}) {
   const userSubjects=user.subjects||[];
   const [openSubject,setOpenSubject]=useState(userSubjects[0]||null);
   const [openCourse,setOpenCourse]=useState(null);
@@ -7152,7 +7160,7 @@ function SyllabusScreen({user,onBack,T}) {
                                   </button>
                                   {topicOpen&&(
                                     <TopicNotesButton user={user} subject={subject} topic={topic} T={T}
-                                      courseCode={course.code} courseName={course.name} keywords={[]}/>
+                                      courseCode={course.code} courseName={course.name} keywords={[]} onUpgrade={onUpgrade}/>
                                   )}
                                 </div>
                               );
@@ -12421,7 +12429,7 @@ export default function App() {
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)} resumeSession={drillResume} onResumeConsumed={()=>setDrillResume(null)}/>}
           {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)} resumeSession={tutorResume} onResumeConsumed={()=>setTutorResume(null)}/>}
           {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
-          {screen==="notes"&&user&&<SyllabusScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
+          {screen==="notes"&&user&&<SyllabusScreen user={user} onBack={()=>setScreen("dashboard")} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T} initialCurrent={examInitial?.current||0} initialAnswers={examInitial?.answers||{}}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

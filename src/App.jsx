@@ -12002,6 +12002,14 @@ export default function App() {
     const postReadiness=Math.round(calcReadiness(newHist)||0);
     setHistory(newHist);
     setExamResult({...result,preReadiness,postReadiness});
+    // Show the results screen RIGHT NOW — everything below this line is
+    // Firestore syncing, which can be slow or stall entirely on bad exam-day
+    // WiFi. It used to gate setScreen("results") behind every awaited write
+    // finishing, so a stalled connection meant the student just saw nothing
+    // happen after tapping Submit, indefinitely. The localStorage backup
+    // (PendingSessions) below already assumed this would be non-blocking —
+    // now it actually is.
+    setScreen("results");
     const newStreak=Streak.bump();setStreak({count:newStreak,studiedToday:true});
     // Sync streak to Firestore so it persists across devices
     if(user?.uid){
@@ -12152,7 +12160,6 @@ export default function App() {
         show("Your result is saved. We'll sync it when your connection is back.","info");
       }
     }
-    setScreen("results");
   };
 
   const handleStartExam=async cfg=>{

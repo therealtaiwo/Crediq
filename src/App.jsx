@@ -11772,11 +11772,21 @@ export default function App() {
     document.head.appendChild(s);
   },[]);
 
+  // Firestore reads have no built-in client-side timeout — on a dead-but-
+  // still-"connected" link (common on saturated exam-hall WiFi), a getDocs()
+  // call can hang indefinitely: never resolves, never rejects, so neither the
+  // try's success path nor the catch ever fires. This races any promise
+  // against a hard deadline so callers always get SOME outcome.
+  const withTimeout=(promise,ms,label)=>Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error(`${label||"operation"} timed out after ${ms}ms`)),ms)),
+  ]);
+
   const loadHistory=async uid=>{
     setHistoryLoaded(false);
     try{
       const q=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
-      const snap=await getDocs(q);
+      const snap=await withTimeout(getDocs(q),10000,"Load history");
       const sessions=snap.docs.map(d=>d.data()).sort((a,b)=>{
         const at=a.createdAt?.toDate?.()?.getTime()||new Date(a.date).getTime();
         const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
@@ -11790,14 +11800,14 @@ export default function App() {
       if(pending.length){
         for(const p of pending){
           try{
-            await saveSession(uid,p.data);
+            await withTimeout(saveSession(uid,p.data),10000,"Resync pending session");
             PendingSessions.remove(p.id);
           }catch(e){console.warn("Pending sync failed — will retry next load:",e);}
         }
         if(pending.length){
           // Re-fetch history to include newly synced sessions
           const q2=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
-          const snap2=await getDocs(q2);
+          const snap2=await withTimeout(getDocs(q2),10000,"Reload history");
           const sessions2=snap2.docs.map(d=>d.data()).sort((a,b)=>{
             const at=a.createdAt?.toDate?.()?.getTime()||new Date(a.date).getTime();
             const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
@@ -11809,7 +11819,10 @@ export default function App() {
     }catch(e){
       console.error("Load history — falling back to cache:",e);
       const cached=HistoryCache.get(uid);
-      if(cached&&cached.length)setHistory(cached);
+      if(cached&&cached.length){
+        setHistory(cached);
+        show("Slow connection — showing your last saved data.","info");
+      }
     }
     finally{setHistoryLoaded(true);}
   };
@@ -11923,10 +11936,10 @@ export default function App() {
         let snap;
         try{
           const q=query(collection(db,"questions"),where("subject","==",subject));
-          snap=await getDocs(q);
+          snap=await withTimeout(getDocs(q),10000,`QB fetch (${subject})`);
         }catch(fetchErr){
           console.error(`QB fetch failed for ${subject}:`,fetchErr);
-          continue; // one subject failing shouldn't block the others
+          continue; // one subject failing (or timing out) shouldn't block the others
         }
         const byYear={};
         snap.docs.forEach(d=>{

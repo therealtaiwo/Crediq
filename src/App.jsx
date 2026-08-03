@@ -5583,8 +5583,16 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
   const versionField=style==="beginner"?"aiTutorPromptVersionBeginner":"aiTutorPromptVersion";
   const qRef=doc(db,"questions",questionId);
-  const qSnap=await getDoc(qRef);
-  const qData=qSnap.data();
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: an unguarded getDoc() — on quota exhaustion this threw uncaught,
+  // leaving the button stuck on "Thinking…" forever. Now fails open: no
+  // cache found just means we skip straight to a fresh generation, same as
+  // a normal cache miss.
+  let qData=null;
+  try{
+    const qSnap=await getDoc(qRef);
+    qData=qSnap.data();
+  }catch(err){console.error("AI Tutor cache read failed (treating as cache miss):",err);}
   const cached=qData?.[cacheField];
   const cacheIsCurrent=qData?.[versionField]===AI_TUTOR_PROMPT_VERSION;
   if(cached&&cacheIsCurrent)return{text:cached,cached:true};
@@ -5594,10 +5602,18 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   // the real security boundary — ai-tutor.js enforces the same cap
   // server-side against the same counter doc, since a free user has no
   // reason not to bypass a client-only check.
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: an unguarded getDoc() on aiTutorCounters. On quota exhaustion this
+  // threw uncaught. Now fails open: an unknown count just skips this
+  // client-side pre-check and lets the request through — the server-side
+  // in-memory counter in ai-tutor.js is the real cap enforcement anyway.
   const cap=user?.isPremium?AI_TUTOR_DAILY_CAP:AI_TUTOR_FREE_DAILY_CAP;
-  const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
-  const counterSnap=await getDoc(counterRef);
-  const count=counterSnap.exists()?(counterSnap.data().count||0):0;
+  let count=0;
+  try{
+    const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
+    const counterSnap=await getDoc(counterRef);
+    count=counterSnap.exists()?(counterSnap.data().count||0):0;
+  }catch(err){console.error("AI Tutor counter read failed (skipping client-side cap check):",err);}
   if(count>=cap)return{blocked:"daily-cap-reached"};
   const isLastFreeUse=!user?.isPremium&&count===AI_TUTOR_FREE_DAILY_CAP-1;
 
@@ -5639,8 +5655,16 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   const courseCode=explicitCourseCode||getCourseUnit(subject,topic)||"";
   const noteId=`${subject}_${topicSlug(topic)}`.replace(/[\/\.#\[\]]/g,"_");
   const noteRef=doc(db,"topicNotes",noteId);
-  const noteSnap=await getDoc(noteRef);
-  const noteData=noteSnap.exists()?noteSnap.data():null;
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: an unguarded getDoc() — on quota exhaustion this threw uncaught,
+  // leaving Notes mode stuck with no fallback state at all. Now fails open:
+  // no cache found just means we skip straight to a fresh generation, same
+  // as a normal cache miss.
+  let noteData=null;
+  try{
+    const noteSnap=await getDoc(noteRef);
+    noteData=noteSnap.exists()?noteSnap.data():null;
+  }catch(err){console.error("Topic notes cache read failed (treating as cache miss):",err);}
   const cachedContent=noteData?.content;
   const cacheIsCurrent=noteData?.aiTutorPromptVersion===TOPIC_NOTES_PROMPT_VERSION;
   if(cachedContent&&cacheIsCurrent)return{text:cachedContent,cached:true};

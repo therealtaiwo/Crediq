@@ -11782,6 +11782,40 @@ export default function App() {
     new Promise((_,reject)=>setTimeout(()=>reject(new Error(`${label||"operation"} timed out after ${ms}ms`)),ms)),
   ]);
 
+  // Resyncs any sessions that failed to save last time (offline recovery).
+  // Deliberately NOT awaited by loadHistory / historyLoaded — this used to run
+  // sequentially inside that gate, so up to 5 pending items × a 10s timeout
+  // each could mean up to 50 seconds of skeleton before the dashboard ever
+  // showed. Old offline backups syncing quietly in the background should
+  // never block showing the student their (already-fetched) current data.
+  const resyncPendingSessions=async uid=>{
+    const pending=PendingSessions.getAll().filter(p=>p.uid===uid);
+    if(!pending.length)return;
+    const results=await Promise.allSettled(
+      pending.map(p=>withTimeout(saveSession(uid,p.data),10000,"Resync pending session"))
+    );
+    let anySynced=false;
+    results.forEach((r,i)=>{
+      if(r.status==="fulfilled"){PendingSessions.remove(pending[i].id);anySynced=true;}
+      else console.warn("Pending sync failed — will retry next load:",r.reason);
+    });
+    if(anySynced){
+      // Quietly refresh history in the background now that new sessions landed —
+      // no loading state change, the student's already looking at their dashboard.
+      try{
+        const q2=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
+        const snap2=await withTimeout(getDocs(q2),10000,"Reload history");
+        const sessions2=snap2.docs.map(d=>d.data()).sort((a,b)=>{
+          const at=a.createdAt?.toDate?.()?.getTime()||new Date(a.date).getTime();
+          const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
+          return at-bt;
+        });
+        setHistory(sessions2);
+        HistoryCache.set(uid,sessions2);
+      }catch(e){console.warn("Background history refresh after resync failed:",e);}
+    }
+  };
+
   const loadHistory=async uid=>{
     setHistoryLoaded(false);
     try{
@@ -11794,28 +11828,7 @@ export default function App() {
       });
       setHistory(sessions);
       HistoryCache.set(uid,sessions);
-
-      // Fix 4: sync any sessions that failed to save last time (offline recovery)
-      const pending=PendingSessions.getAll().filter(p=>p.uid===uid);
-      if(pending.length){
-        for(const p of pending){
-          try{
-            await withTimeout(saveSession(uid,p.data),10000,"Resync pending session");
-            PendingSessions.remove(p.id);
-          }catch(e){console.warn("Pending sync failed — will retry next load:",e);}
-        }
-        if(pending.length){
-          // Re-fetch history to include newly synced sessions
-          const q2=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
-          const snap2=await withTimeout(getDocs(q2),10000,"Reload history");
-          const sessions2=snap2.docs.map(d=>d.data()).sort((a,b)=>{
-            const at=a.createdAt?.toDate?.()?.getTime()||new Date(a.date).getTime();
-            const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
-            return at-bt;
-          });
-          setHistory(sessions2);
-        }
-      }
+      resyncPendingSessions(uid).catch(e=>console.warn("Pending resync (background):",e)); // fire-and-forget, on purpose
     }catch(e){
       console.error("Load history — falling back to cache:",e);
       const cached=HistoryCache.get(uid);

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "rea
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Home, Play, Target, BarChart2, Shuffle, Flame, Sun, Moon, LogOut,
-  ChevronLeft, CheckCircle, AlertCircle, Zap, WifiOff, X, AlertTriangle,
+  ChevronLeft, ChevronDown, CheckCircle, AlertCircle, Zap, WifiOff, X, AlertTriangle,
   Eye, EyeOff, MessageCircle, Flag, Award, Users, Calendar, User,
   TrendingUp, Clock, Star, ChevronRight, Shield, BookOpen, Lock,
   RefreshCw, Copy, Bell, Brain, Sparkles, GraduationCap, Sigma, Search
@@ -5538,6 +5538,14 @@ const AI_TUTOR_EXCLUDED_TOPICS=["Genetics"];
 // docs predating this field entirely (undefined) will also correctly
 // miss the check and regenerate.
 const AI_TUTOR_PROMPT_VERSION=3;
+// Separate from AI_TUTOR_PROMPT_VERSION on purpose: Notes and Explain modes
+// have independent prompts in ai-tutor.js, so a change to one shouldn't force
+// every previously-cached instance of the OTHER to regenerate. Bumped from an
+// implicit 3 (shared) to 1 (its own series) when the Notes prompt was
+// deepened to full A-level textbook depth with a key-terms section and
+// practice problems — that change needs old shallow cached notes to
+// regenerate, but explain-mode's cache is untouched by it.
+const TOPIC_NOTES_PROMPT_VERSION=1;
 const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 
 async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
@@ -5599,19 +5607,22 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
 const topicSlug=topic=>(topic||"general").toLowerCase().trim()
   .replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"general";
 
-async function getTopicNotes({user,subject,topic}){
-  const courseCode=getCourseUnit(subject,topic)||"";
+async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,courseName:explicitCourseName,courseDesc:explicitCourseDesc,keywords:explicitKeywords}){
+  const courseCode=explicitCourseCode||getCourseUnit(subject,topic)||"";
   const noteId=`${subject}_${topicSlug(topic)}`.replace(/[\/\.#\[\]]/g,"_");
   const noteRef=doc(db,"topicNotes",noteId);
   const noteSnap=await getDoc(noteRef);
   const noteData=noteSnap.exists()?noteSnap.data():null;
   const cachedContent=noteData?.content;
-  const cacheIsCurrent=noteData?.aiTutorPromptVersion===AI_TUTOR_PROMPT_VERSION;
+  const cacheIsCurrent=noteData?.aiTutorPromptVersion===TOPIC_NOTES_PROMPT_VERSION;
   if(cachedContent&&cacheIsCurrent)return{text:cachedContent,cached:true};
 
   if(!user?.isPremium)return{blocked:"premium-required"};
 
   const course=(JUPEB_COURSES[subject]||[]).find(c=>c.code===courseCode);
+  const courseName=explicitCourseName||course?.name||"";
+  const courseDesc=explicitCourseDesc||course?.desc||"";
+  const courseKeywords=explicitKeywords||course?.keywords||[];
 
   let res;
   try{
@@ -5621,8 +5632,8 @@ async function getTopicNotes({user,subject,topic}){
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
         mode:"notes",subject,topic,
-        courseCode,courseName:course?.name||"",courseDesc:course?.desc||"",
-        keywords:(course?.keywords||[]).slice(0,25),
+        courseCode,courseName,courseDesc,
+        keywords:courseKeywords.slice(0,25),
       })
     });
   }catch(err){return{blocked:"network-error"};}
@@ -5637,7 +5648,7 @@ async function getTopicNotes({user,subject,topic}){
     await setDoc(noteRef,{
       content:data.text,subject,topic:topic||"",courseCode,
       generatedAt:new Date().toISOString(),
-      aiTutorPromptVersion:AI_TUTOR_PROMPT_VERSION,
+      aiTutorPromptVersion:TOPIC_NOTES_PROMPT_VERSION,
     },{merge:true});
   }catch(err){console.error("Failed to cache topic notes:",err);}
 
@@ -6045,7 +6056,6 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
         </div>
         {delightLine&&<div style={{fontSize:11,color:T.gold,fontStyle:"italic",marginBottom:8,opacity:0.85}}>{delightLine}</div>}
         <AiTutorFormattedText text={shownText} T={T}/>
-        <CopyToNotesButton user={user} content={shownText} subject={question.subject} topic={question.topic} T={T}/>
       </div>
     );
   }
@@ -6088,7 +6098,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
 // topic (not just the current question), so it's offered independently of
 // whether the student has tapped AI Tutor at all. Premium-only, no free-cap
 // tier (unlike AI Tutor's 3/day) since it's a heavier, cached-once value-add.
-function TopicNotesButton({user,subject,topic,T}){
+function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc,keywords,hideCopyToNotes}){
   const[state,setState]=useState("idle"); // idle | loading | shown | paywall | blocked
   const[notesText,setNotesText]=useState(null);
   const[blockedReason,setBlockedReason]=useState(null);
@@ -6097,7 +6107,7 @@ function TopicNotesButton({user,subject,topic,T}){
 
   const handleTap=async()=>{
     setState("loading");
-    const result=await getTopicNotes({user,subject,topic});
+    const result=await getTopicNotes({user,subject,topic,courseCode,courseName,courseDesc,keywords});
     if(result.text){setNotesText(result.text);setState("shown");}
     else if(result.blocked==="premium-required"){setState("paywall");}
     else{setBlockedReason(result.blocked);setState("blocked");}
@@ -6110,7 +6120,6 @@ function TopicNotesButton({user,subject,topic,T}){
           FULL NOTES · {topic.toUpperCase()}
         </div>
         <AiTutorFormattedText text={notesText} T={T} collapsible={true}/>
-        <CopyToNotesButton user={user} content={notesText} subject={subject} topic={topic} T={T}/>
       </div>
     );
   }
@@ -6136,44 +6145,6 @@ function TopicNotesButton({user,subject,topic,T}){
         background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
         letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
       {state==="loading"?"Generating notes…":`📝 Full notes on ${topic}`}
-    </button>
-  );
-}
-
-// ─── COPY TO NOTES ────────────────────────────────────────────────────────────
-// Appends one entry to the student's single notes doc via arrayUnion — no read
-// needed first, so this stays a single cheap write regardless of how many
-// notes already exist.
-async function saveNoteEntry(uid,entry){
-  await setDoc(doc(db,"notes",uid),{
-    entries:arrayUnion(entry),
-    updatedAt:serverTimestamp(),
-  },{merge:true});
-}
-
-function CopyToNotesButton({user,content,subject,topic,T}){
-  const[state,setState]=useState("idle"); // idle | saving | saved
-  const handleCopy=async()=>{
-    if(!user?.uid||state!=="idle")return;
-    setState("saving");
-    try{
-      await saveNoteEntry(user.uid,{
-        type:"pasted",
-        content,
-        subject:subject||"",
-        topic:topic||"",
-        savedAt:Date.now(),
-      });
-      setState("saved");
-      track("copied_to_notes",{uid:user.uid,subject,topic});
-    }catch(e){console.error("Copy to notes failed:",e);setState("idle");}
-  };
-  return(
-    <button onClick={handleCopy} disabled={state!=="idle"} className="btn-press"
-      style={{marginTop:10,background:"none",border:`1px solid ${T.gold}44`,borderRadius:8,
-        padding:"6px 11px",color:state==="saved"?"#4ade80":T.gold,fontSize:10.5,
-        display:"flex",alignItems:"center",gap:5,cursor:state==="idle"?"pointer":"default"}}>
-      {state==="saved"?<><CheckCircle size={12}/> Saved to Notes</>:<><Copy size={12}/> {state==="saving"?"Saving…":"Copy to Notes"}</>}
     </button>
   );
 }
@@ -6886,7 +6857,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
         )}</AnimatePresence>
         <AnimatePresence>{showNotes&&(
           <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
-            <NotesScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
+            <SyllabusScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
           </motion.div>
         )}</AnimatePresence>
       </div>
@@ -6909,7 +6880,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
       )}</AnimatePresence>
       <AnimatePresence>{showNotes&&(
         <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
-          <NotesScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
+          <SyllabusScreen user={user} onBack={()=>setShowNotes(false)} T={T}/>
         </motion.div>
       )}</AnimatePresence>
       <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
@@ -6974,95 +6945,184 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
 }
 
 // ─── NOTES SCREEN ─────────────────────────────────────────────────────────────
-// Single Firestore doc per user (notes/{uid}), one array field. Debounced
-// autosave a couple seconds after the last edit — never per-keystroke, and
-// never one write per note, so cost stays flat regardless of how many notes
-// a student accumulates.
-function NotesScreen({user,onBack,T}) {
-  const[entries,setEntries]=useState(null); // null = still loading
-  const[saveState,setSaveState]=useState("idle"); // idle | pending | saved
-  const saveTimer=useRef(null);
-  const skipNextSave=useRef(true); // don't fire a save from the initial load
+// ─── JUPEB SYLLABUS (topic-level, for the syllabus/notes browser) ────────────
+// Sourced from the official published syllabus per subject where available —
+// this is a full topic breakdown, not just the coarse course-level "desc" used
+// for keyword-matching elsewhere. 13 of 19 subjects have official topic lists;
+// the remaining 6 (Geography, French, History, Igbo, Music, Yoruba) fall back
+// to a coarser topic list derived from JUPEB_COURSES' own "desc" field until
+// their official syllabi are sourced too.
+const JUPEB_SYLLABUS={
+  "Physics":[
+    {code:"PHY 001",name:"Mechanics & Properties of Matter",topics:["Units","Vectors","Particle Kinetics","Dynamics","The Gravitational Field","Work, Energy & Power","Circular & Oscillatory Motion","Elasticity","Hydrostatics","Hydrodynamics"]},
+    {code:"PHY 002",name:"Heat, Waves and Optics",topics:["Ideal Gases","Temperature & Thermometry","Thermodynamics","Electromagnetic Waves","Geometrical Optics","Lenses & Optical Instruments","Oscillation of Waves","Wave Theory of Light","Sound Waves"]},
+    {code:"PHY 003",name:"Electricity & Magnetism",topics:["Electrostatics","Capacitors","Current Electricity","Magnetic Field","Force on a Conductor & Moving Charge","Electromagnetic Induction","Alternating Current (AC) Circuit"]},
+    {code:"PHY 004",name:"Modern Physics",topics:["Atomic Structure","Elements of Modern Physics","X-Ray","Wave Particle Duality","Principles of Radioactivity","Introduction to Semi-Conductors","Applied Physics"]},
+  ],
+  "Chemistry":[
+    {code:"CHM 001",name:"General Chemistry",topics:["Measurements","Nature of Matter","Atomic Masses","Atomic Structure","Periodicity","Mole Concept","Types of Chemical Reactions","Chemical Bonding"]},
+    {code:"CHM 002",name:"Physical Chemistry",topics:["Kinetic Molecular Theory of Gases","Solution","Thermochemistry","Electrochemistry","Chemical Kinetics","Equilibrium State","Nuclear Chemistry"]},
+    {code:"CHM 003",name:"Inorganic Chemistry",topics:["Periodicity of Elements","Chemistry of Hydrogen","S-Block Elements","P-Block Elements","D-Block Elements"]},
+    {code:"CHM 004",name:"Organic Chemistry",topics:["Structure and Bonding in Organic Compounds","Purification","Organic Reactions","Isomerism in Organic Compounds","Organic Compounds","Macromolecules","Biotechnology","Petroleum Industry"]},
+  ],
+  "Mathematics":[
+    {code:"MAT 001",name:"Advanced Pure Mathematics",topics:["Real Numbers","Algebra","Complex Numbers","Trigonometry","Coordinate Geometry"]},
+    {code:"MAT 002",name:"Calculus",topics:["Differentiation","Exponential Functions","Logarithm Function","Integration","Second Order Differential Equations"]},
+    {code:"MAT 003",name:"Applied Mathematics",topics:["Vectors","Kinematics of Motion in a Straight Line","Newtonian Mechanics","Forces and Equilibrium","Equilibrium of a Rigid Body"]},
+    {code:"MAT 004",name:"Statistics",topics:["Description of a Data Set","Mathematics of Counting","Random Variables","Normal Random Variables","Regression and Correlation","Basic Sampling Techniques"]},
+  ],
+  "Agricultural Science":[
+    {code:"AGR 001",name:"Agronomy & Crop Production",topics:["Soil Physical Properties","Soil Chemical Properties","Soil Fertility","Soil & Water Conservation","Irrigation","Plant Growth & Development","Water & Nutrient Uptake","Photosynthesis & Respiration","Principles of Crop Production","Principles of Horticulture and Ornamental Crop Production","Principles of Crops Production","Farm Mechanization & Engineering","Animal Power & Animal Draught Implements"]},
+    {code:"AGR 002",name:"Animal Science & Production",topics:["Animal Nutrition","Reproductive System of Farm Animals","Animal Breeding","Animal Products","Animal Health"]},
+    {code:"AGR 003",name:"Wildlife, Aquaculture and Agro-forestry",topics:["Importance of Wildlife and Forestry to the Nigerian Economy","Principles of Agro-forestry","Forestry and Climate Change","Wildlife and Forest Conservation","Deforestation and Desertification","Utilization of Forest Resources","Marketing of Forest Products","Aquaculture: Environment & Economy"]},
+    {code:"AGR 004",name:"Agricultural Economics & Extension",topics:["Principles of Agricultural Economics","Principles of Agricultural Extension","Farm Management","Marketing of Farm Produce"]},
+  ],
+  "Biology":[
+    {code:"BIO 001",name:"General Biology",topics:["Origin of Living Things","Living Things in Nature and Biological Molecules","Cell Organization, Structure and Function","Cell Division, Genetics, Variation and Heredity","Systematics: Taxonomy and Nomenclature","Ecology","Biology Methods and Application","Evolution"]},
+    {code:"BIO 002",name:"Basic Botany",topics:["Basic Characteristics and Diversity of Plants","Taxonomy of Lower and Higher Plants","Plant Conservation","Plant Tissues and Functions","Plant Morphology/Anatomy","Nutrition in Plants","Transport System in Plants","Respiration","Plant Reproduction","Growth Regulators","Crop Improvement","Economic and Ecological Importance of Plants"]},
+    {code:"BIO 003",name:"Microbiology",topics:["History of the Discovery of Microorganisms","Types and Taxonomic Groupings of Microorganisms","Structure, Morphology and Characteristics of Microorganisms","Microbial Ecology","Microbial Nucleic Acids in Information Storage and Transfer"]},
+    {code:"BIO 004",name:"Fundamentals of Zoology",topics:["Diversity and General Characteristics of Animals","Systematics (Taxonomy) of Animals","Evolution of Animals","Invertebrates","Introduction to Chordates","Ecological and Economic Importance of Animals","Physiological Processes","Transport of Substance Across Membrane"]},
+  ],
+  "Economics":[
+    {code:"ECN 001",name:"Principles of Economics I",topics:["Introduction","Basic Economic Principles","Tools and Methods of Economic Analysis","The Price System","Theory of Consumer Behavior","Theory of the Firm","Market Structure","Theory of Income Distribution","Government Intervention"]},
+    {code:"ECN 002",name:"Principles of Economics II",topics:["Circular Flow of Income","National Income Accounting","Theory of National Income and Determination","Money and Banking","Inflation and Unemployment","Public Finance"]},
+    {code:"ECN 003",name:"Applied Economics I",topics:["Economic Structure of West Africa","Growth and Development","Population","International Trade"]},
+    {code:"ECN 004",name:"Applied Economics II",topics:["Measurement & Application in Macroeconomics","Applied Issues in Labour Economics","Stabilization Policies in Developing Countries","International Economic Institutions"]},
+  ],
+  "Government":[
+    {code:"GOV 001",name:"Elements of Government",topics:["Nature of Government & Politics","Basic Concepts of Government","The State: Structure & Types of Government","Constitution & Constitutionalism","Governance & Citizenship"]},
+    {code:"GOV 002",name:"Fundamentals of Government",topics:["Political Ideas & Thoughts","Political Parties, Party Systems & Pressure Groups","Public Opinion & Propaganda","Elections & Electoral System","Political & Social Change","Public Administration","International Relations"]},
+    {code:"GOV 003",name:"Nigerian Government & Politics",topics:["Pre-Colonial Systems of Government in Nigeria","Colonial Administration in Nigeria","Development of Political Parties in Nigeria","Elections & Electoral Process in Nigeria","Major Political Crises in Nigeria","Reasons for Military Intervention","Nigerian Foreign Policy"]},
+    {code:"GOV 004",name:"African Government & Politics",topics:["Africa Before European Invasion","Colonial Systems of Administration in Africa","Constitutional Development of Selected West African Countries","The Nationalist Movement in West Africa","Military Intervention in Africa","Democratization & Political Process in Africa"]},
+  ],
+  "Accounting":[
+    {code:"ACC 001",name:"Basic Financial Accounting",topics:["Introduction","Structure of the IASB","Basic Steps in Bookkeeping up to the Trial Balance","Debit and Credit Entries","Accounting Errors and Corrections","Bank Reconciliation Statement","End of Period Adjustment","Financial Statements of Sole Proprietorship","Manufacturing Accounts","Partnership Accounts","Incomplete Records","Accounts of Clubs and Societies","Financial Statements of Limited Liability Companies"]},
+    {code:"ACC 002",name:"Basic Cost & Management Accounting",topics:["Introduction to Cost & Management Accounting","Basic Elements of Cost","Material Costing","Quantitative Models for Material and Stock Control","Labour Costing","Overhead Cost","Job Costing","Costing Techniques","Cost-Volume-Profit Analysis","Budgeting","Investment Appraisal"]},
+    {code:"ACC 003",name:"Basic Auditing",topics:["History of Auditing","Nature and Scope of Auditing","Audit Framework","Audit Communication","Audit Report","Contemporary Issues in Auditing"]},
+    {code:"ACC 004",name:"Basic Principles of Nigerian Taxation",topics:["History of Tax","Tax Authorities in Nigeria","Tax Administration in Nigeria","Basis Periods","Computation of Tax Liabilities"]},
+  ],
+  "Business Studies":[
+    {code:"BUS 001",name:"Business and its Environment",topics:["Enterprise","Business Enterprise","Size of a Business","Stakeholders in a Business","Business Objectives","Organizations","Communication"]},
+    {code:"BUS 002",name:"Finance and Accounting",topics:["Business Finance","Working Capital Management","Cost","Accounting Fundamentals","Budgeting"]},
+    {code:"BUS 003",name:"Management I",topics:["Management and Leadership","Motivation","Human Resource Management","Marketing"]},
+    {code:"BUS 004",name:"Management II",topics:["Operations","Strategic Management"]},
+  ],
+  "CRS":[
+    {code:"CRS 001",name:"Old Testament Studies: History & Religion of Israel and Judah",topics:["Formation & Composition of the Old Testament","Mosaic Authorship of the Pentateuch","The Rise of Monarchy in Israel","The Divided Kingdoms & The Exiles","The Rise of Prophecy in Israel"]},
+    {code:"CRS 002",name:"New Testament Studies: The Synoptic Gospels",topics:["Historical Background of the New Testament","The Synopsis, Materials & Canonization of the New Testament","The Synoptic Gospels & The Synoptic Problem","Modern Criticism of the Gospel","Literature & Theology of the Synoptic Gospels"]},
+    {code:"CRS 003",name:"History of Christianity in West Africa",topics:["Previous Attempts at Christianizing Africa","Establishing Christianity in Sierra Leone","The Planting of Christianity in the Gold Coast (Ghana)","The Planting of Christianity in Nigeria","The Rise of the African Independent Churches","Pentecostalism in Nigeria","Proliferation of Churches in Nigeria"]},
+    {code:"CRS 004",name:"Religion and Society",topics:["Relationship Between Religion & Society","Sociological Theories of Religion","Measures of Religion","Functions of Religion","Religion, Peace & Conflict Resolution","Religious Personality & Human Values","Christianity's Response to Contemporary Issues"]},
+  ],
+  "Literature in English":[
+    {code:"LIT 001",name:"Introduction to Drama",topics:["Introduction to Drama","The Classical Tradition","European Drama (Renaissance Tradition)","European Drama (Modern Tradition)","American Drama (Modern Tradition)","African Drama (Modern Tradition)"]},
+    {code:"LIT 002",name:"Prose Fiction",topics:["Introduction to Prose Fiction","The European Prose Tradition","African Prose (Modern African Novel)"]},
+    {code:"LIT 003",name:"Introduction to Poetry",topics:["Introduction to Poetry","The Classical Tradition","European Poetry (Medieval and Renaissance)","European Poetry (19th and 20th Centuries)","African Poetry (Modern Tradition)"]},
+    {code:"LIT 004",name:"Unseen Prose & Poetry",topics:["Literary Appreciation (Unseen)"]},
+  ],
+  "Islamic Religious Studies":[
+    {code:"ISS 001",name:"History of Islam",topics:["History of Islam"]},
+    {code:"ISS 002",name:"Tawhid & Ibadat",topics:["Tawhid & Ibadat"]},
+    {code:"ISS 003",name:"Qur'anic Studies",topics:["Qur'anic Studies"]},
+    {code:"ISS 004",name:"Introduction to the Study of Hadith",topics:["Introduction to the Study of Hadith"]},
+  ],
+  "Visual Arts":[
+    {code:"VSA 001",name:"Art History",topics:["Art History"]},
+    {code:"VSA 002",name:"Two Dimensional Design",topics:["Painting","Textile","Graphics","Photography","Drawing"]},
+    {code:"VSA 003",name:"Three Dimensional Design",topics:["Sculpture","Ceramics"]},
+    {code:"VSA 004",name:"The Decorative Arts & Other Craft Traditions",topics:["The Decorative Arts and Other Craft Traditions"]},
+  ],
+};
+// Fallback for the 6 subjects lacking an official topic list yet — split each
+// course's existing coarse "desc" string into rough topic-sized chunks. Less
+// precise than the sourced subjects above, but still browsable and still
+// generates real notes; swap these out once official syllabi come in.
+function fallbackSyllabusFor(subject){
+  const courses=JUPEB_COURSES[subject];
+  if(!courses)return null;
+  return courses.map(c=>({code:c.code,name:c.name,topics:(c.desc||"").split("·").map(s=>s.trim()).filter(Boolean)}));
+}
+function getSyllabusFor(subject){
+  return JUPEB_SYLLABUS[subject]||fallbackSyllabusFor(subject)||[];
+}
 
-  useEffect(()=>{
-    let cancelled=false;
-    (async()=>{
-      try{
-        const snap=await getDoc(doc(db,"notes",user.uid));
-        if(cancelled)return;
-        setEntries(snap.exists()?(snap.data().entries||[]):[]);
-      }catch(e){console.error("Failed to load notes:",e);if(!cancelled)setEntries([]);}
-    })();
-    return()=>{cancelled=true;};
-  },[user.uid]);
-
-  useEffect(()=>{
-    if(entries===null)return;
-    if(skipNextSave.current){skipNextSave.current=false;return;}
-    setSaveState("pending");
-    if(saveTimer.current)clearTimeout(saveTimer.current);
-    saveTimer.current=setTimeout(async()=>{
-      try{
-        await setDoc(doc(db,"notes",user.uid),{entries,updatedAt:serverTimestamp()},{merge:true});
-        setSaveState("saved");
-        setTimeout(()=>setSaveState(s=>s==="saved"?"idle":s),1500);
-      }catch(e){console.error("Failed to save notes:",e);setSaveState("idle");}
-    },2500);
-    return()=>{if(saveTimer.current)clearTimeout(saveTimer.current);};
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[entries]);
-
-  const addTextEntry=()=>setEntries(e=>[...(e||[]),{type:"text",content:"",createdAt:Date.now()}]);
-  const updateEntry=(idx,content)=>setEntries(e=>e.map((en,i)=>i===idx?{...en,content}:en));
-  const deleteEntry=(idx)=>setEntries(e=>e.filter((_,i)=>i!==idx));
+// ─── SYLLABUS SCREEN (full syllabus browser → AI-generated deep notes) ───────
+// Replaces the old personal note-jotting screen. Subject → course unit →
+// topic, each topic opening into TopicNotesButton's cached/AI-generated
+// full-topic notes — the same generation path used elsewhere, so a topic
+// opened here and one opened mid-drill share the exact same cache.
+function SyllabusScreen({user,onBack,T}) {
+  const userSubjects=user.subjects||[];
+  const [openSubject,setOpenSubject]=useState(userSubjects[0]||null);
+  const [openCourse,setOpenCourse]=useState(null);
+  const [openTopic,setOpenTopic]=useState(null);
 
   return(
     <div className="screen-enter" style={{minHeight:"100dvh",background:T.bg,color:T.text,paddingBottom:80}}>
       <div style={{background:T.navBg,padding:"20px 22px 16px",borderBottom:`1px solid ${T.navBorder}`}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.06em"}}>
-            {saveState==="pending"?"SAVING…":saveState==="saved"?"SAVED":""}
-          </span>
-        </div>
+        <button className="btn-press" onClick={onBack} style={{background:"none",border:"none",color:"rgba(247,243,236,0.5)",cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,padding:0,display:"flex",alignItems:"center",gap:4}}><ChevronLeft size={14}/> Back</button>
         <div style={{marginTop:14}}>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>My Notes</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,color:"#F7F3EC"}}>Study Notes</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.muted,marginTop:4}}>Full syllabus, deep AI-generated notes for every topic</div>
         </div>
       </div>
 
       <div style={{padding:18,maxWidth:700,margin:"0 auto",width:"100%"}}>
-        {entries===null?(
-          <div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11}}>Loading notes…</div>
-        ):entries.length===0?(
-          <div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11,lineHeight:1.6}}>No notes yet.<br/>Add one below, or tap "Copy to Notes" on any AI Tutor explanation.</div>
-        ):(
-          entries.map((entry,idx)=>(
-            <div key={idx} style={{marginBottom:14,padding:14,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`}}>
-              {entry.type==="pasted"?(
-                <>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.08em"}}>{(entry.subject||"").toUpperCase()}{entry.topic?` · ${entry.topic}`:""}</span>
-                    <button onClick={()=>deleteEntry(idx)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:2}}><X size={13}/></button>
-                  </div>
-                  <AiTutorFormattedText text={entry.content} T={T}/>
-                </>
-              ):(
-                <>
-                  <div style={{display:"flex",justifyContent:"flex-end",marginBottom:4}}>
-                    <button onClick={()=>deleteEntry(idx)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:2}}><X size={13}/></button>
-                  </div>
-                  {entry.content&&entry.content.trim()&&<ListenButton text={entry.content} T={T}/>}
-                  <textarea value={entry.content} onChange={e=>updateEntry(idx,e.target.value)} placeholder="Type your note…" rows={4}
-                    style={{width:"100%",background:"none",border:"none",outline:"none",color:T.text,fontSize:14,lineHeight:1.5,resize:"vertical",fontFamily:"inherit"}}/>
-                </>
+        {userSubjects.length===0&&(
+          <div style={{textAlign:"center",padding:"40px 0",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11}}>Add your subjects in your profile to browse the syllabus.</div>
+        )}
+        {userSubjects.map(subject=>{
+          const courses=getSyllabusFor(subject);
+          const isOpen=openSubject===subject;
+          return(
+            <div key={subject} style={{marginBottom:10,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+              <button className="btn-press" onClick={()=>{setOpenSubject(isOpen?null:subject);setOpenCourse(null);}}
+                style={{width:"100%",padding:"14px 16px",background:T.surface,border:"none",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                <span style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:700,color:T.text}}>{subject}</span>
+                <ChevronDown size={16} color={T.muted} style={{transform:isOpen?"rotate(180deg)":"none",transition:"transform .15s"}}/>
+              </button>
+              {isOpen&&(
+                <div style={{padding:"6px 12px 12px"}}>
+                  {courses.length===0&&<div style={{fontSize:11,color:T.muted,fontStyle:"italic",padding:"8px 4px"}}>No syllabus data for this subject yet.</div>}
+                  {courses.map(course=>{
+                    const courseOpen=openCourse===course.code;
+                    return(
+                      <div key={course.code} style={{marginTop:8}}>
+                        <button className="btn-press" onClick={()=>setOpenCourse(courseOpen?null:course.code)}
+                          style={{width:"100%",padding:"10px 12px",background:"none",border:`1px solid ${T.border}`,borderRadius:8,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                          <span style={{textAlign:"left"}}>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.06em",display:"block"}}>{course.code}</span>
+                            <span style={{fontSize:12.5,color:T.text}}>{course.name}</span>
+                          </span>
+                          <ChevronDown size={14} color={T.muted} style={{transform:courseOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
+                        </button>
+                        {courseOpen&&(
+                          <div style={{padding:"6px 4px 2px"}}>
+                            {course.topics.map(topic=>{
+                              const topicOpen=openTopic===`${subject}|${course.code}|${topic}`;
+                              return(
+                                <div key={topic}>
+                                  <button className="btn-press" onClick={()=>setOpenTopic(topicOpen?null:`${subject}|${course.code}|${topic}`)}
+                                    style={{width:"100%",padding:"9px 8px",background:"none",border:"none",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",textAlign:"left"}}>
+                                    <span style={{fontSize:12.5,color:T.text}}>{topic}</span>
+                                    <span style={{fontSize:10,color:T.gold,flexShrink:0,marginLeft:8}}>{topicOpen?"Hide":"Open"}</span>
+                                  </button>
+                                  {topicOpen&&(
+                                    <TopicNotesButton user={user} subject={subject} topic={topic} T={T}
+                                      courseCode={course.code} courseName={course.name} keywords={[]}/>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
-          ))
-        )}
-
-        {entries!==null&&(
-          <button onClick={addTextEntry} className="btn-press" style={{width:"100%",padding:"12px 0",borderRadius:10,border:`1.5px dashed ${T.border}`,background:"none",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:11,cursor:"pointer"}}>+ Add note</button>
-        )}
+          );
+        })}
       </div>
     </div>
   );
@@ -10335,8 +10395,6 @@ function TheoryScreen({user,onEnd,onBack,T}){
   const[followUpUsed,setFollowUpUsed]=useState({});      // qId -> true, one follow-up only
   const[followUpText,setFollowUpText]=useState({});      // qId -> clarification string
   const[followUpLoading,setFollowUpLoading]=useState(false);
-  const[showCalc,setShowCalc]=useState(false);
-  const[showReport,setShowReport]=useState(false);
   const fileInputRef=useRef(null);
 
   const YEARS=[2019,2020,2021,2022,2024,2025];
@@ -10589,7 +10647,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
           <button onClick={onBack} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}><ChevronLeft size={22}/></button>
           <div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.14em",marginBottom:2}}>THEORY PRACTICE</div>
-            <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:700,letterSpacing:-0.3,color:T.text}}>Essay & Structured Questions</div>
+            <div style={{fontSize:18,fontWeight:700,letterSpacing:-0.3}}>Essay & Structured Questions</div>
           </div>
         </div>
 
@@ -10684,8 +10742,6 @@ function TheoryScreen({user,onEnd,onBack,T}){
 
     return(
       <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
-        <AnimatePresence>{showCalc&&<ScientificCalc T={T} onClose={()=>setShowCalc(false)}/>}</AnimatePresence>
-        {showReport&&<ReportModal question={q} user={user} onClose={()=>setShowReport(false)} onSubmit={data=>track("question_reported",{uid:user?.uid,...data})} T={T}/>}
         {/* Header */}
         <div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
@@ -10698,8 +10754,6 @@ function TheoryScreen({user,onEnd,onBack,T}){
                 </button>
               )}
             </div>
-            <button className="btn-press" onClick={()=>{document.activeElement?.blur();setShowCalc(true);}} title="Calculator" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:4,fontSize:15,lineHeight:1}}>🧮</button>
-            <button className="btn-press" onClick={()=>setShowReport(true)} title="Flag this question" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",padding:4}}><Flag size={14}/></button>
             <div className={timerClass} style={{fontFamily:"'DM Mono',monospace",fontSize:16,fontWeight:700,color:timerColor,minWidth:52,textAlign:"right"}}>{fmtTime(displayTime)}</div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -10722,11 +10776,8 @@ function TheoryScreen({user,onEnd,onBack,T}){
           {/* Year/Paper badge */}
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginBottom:14}}>{q.year} · Paper {q.paperNumber||1}{q.totalMarks?` · ${q.totalMarks} marks`:""}</div>
 
-          {/* Question text — only show as one block when there are no
-              sub-parts; when subQuestions exist, this same text is already
-              fully covered by the per-part cards below, so showing both was
-              pure duplication. */}
-          {sqs.length===0&&q.question&&q.question.trim()&&(
+          {/* Question text — only show if not empty */}
+          {q.question&&q.question.trim()&&(
             <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,whiteSpace:"pre-wrap"}}>
               {renderMathText(q.question,T)}
             </div>
@@ -10784,7 +10835,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
                     <div key={sq.part} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
                         <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?(sq.marks===1?" mark":" marks"):""}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
                       </div>
                       <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{sq.text}</div>
                     </div>
@@ -10832,7 +10883,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
                     {/* Sub-question header */}
                     <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                       <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
-                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?(sq.marks===1?" mark":" marks"):""}</span>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
                     </div>
                     <div style={{fontSize:14,lineHeight:1.6,color:T.text,marginBottom:12}}>{sq.text}</div>
 
@@ -11278,7 +11329,7 @@ function ProfileScreen({user,streak,onBack,onLogout,onNav,dark,setDark,T,showToa
         <div className="fi2" style={{marginBottom:20}}>
           {[
             {icon:<Calendar size={18} color={T.gold}/>,label:"JUPEB 2026 Timetable",sub:"Official exam schedule with countdowns",action:()=>onNav("timetable"),accent:T.gold},
-            {icon:<BookOpen size={18} color={T.gold}/>,label:"My Notes",sub:"Everything you've saved, in one place",action:()=>onNav("notes"),accent:T.gold},
+            {icon:<BookOpen size={18} color={T.gold}/>,label:"Study Notes",sub:"Full syllabus, deep AI-generated notes for every topic",action:()=>onNav("notes"),accent:T.gold},
             {icon:<Sigma size={18} color={T.gold}/>,label:"Formula Bank",sub:"Formulas, constants & tables — no AI needed",action:()=>onNav("formulabank"),accent:T.gold},
             {icon:<Brain size={18} color={T.gold}/>,label:"Intelligence Report",sub:"Your full readiness score, breakdown & next actions",action:()=>onNav("intelligence"),accent:T.gold},
             ...(ambAppStatus==="approved"||user.isAmbassador
@@ -12326,7 +12377,7 @@ export default function App() {
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)} resumeSession={drillResume} onResumeConsumed={()=>setDrillResume(null)}/>}
           {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)} resumeSession={tutorResume} onResumeConsumed={()=>setTutorResume(null)}/>}
           {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
-          {screen==="notes"&&user&&<NotesScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
+          {screen==="notes"&&user&&<SyllabusScreen user={user} onBack={()=>setScreen("dashboard")} T={T}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T} initialCurrent={examInitial?.current||0} initialAnswers={examInitial?.answers||{}}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
           {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}

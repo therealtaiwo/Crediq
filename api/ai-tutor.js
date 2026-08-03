@@ -241,10 +241,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!userDoc.exists || userDoc.data()?.isPremium !== true) {
-    res.status(403).json({ error: "Premium required" });
+  if (!userDoc.exists) {
+    res.status(403).json({ error: "Account not found" });
     return;
   }
+  const isPremium = userDoc.data()?.isPremium === true;
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -252,11 +253,27 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Server-side source of truth for the free-tier daily cap — the client also
+  // checks this locally for a snappy UI, but that check is NOT the security
+  // boundary (a free user has no reason not to bypass a client-only check).
+  // This was previously missing entirely: the whole function required
+  // isPremium===true unconditionally, silently 403-ing every free user's
+  // Explain-mode request regardless of their daily count — that bug is what
+  // this replaces.
+  const AI_TUTOR_FREE_DAILY_CAP = 3;
+  const AI_TUTOR_DAILY_CAP = 60;
+
   try {
     const body = req.body || {};
 
-    // ── NOTES MODE — full topic notes, not a per-question explanation ──────
+    // ── NOTES MODE — full topic notes, premium-only (matches the client,
+    // which never lets a free user reach this call for a NEW generation —
+    // enforced here too since a client-side check alone isn't real security) ─
     if (body.mode === "notes") {
+      if (!isPremium) {
+        res.status(403).json({ error: "Premium required for full study notes" });
+        return;
+      }
       const { subject, topic, courseCode, courseName, courseDesc, keywords } = body;
 
       if (!subject || !topic) {
@@ -331,6 +348,21 @@ Write full JUPEB-level study notes on this topic.`;
       return;
     }
 
+    // Real server-side enforcement of the daily cap. The Firestore rule for
+    // aiTutorCounters only allows premium users to WRITE to it directly, so a
+    // free user's own client-side increment silently fails (caught, logged,
+    // ignored) — that's fine now, because the Admin SDK here bypasses
+    // security rules entirely and is the authoritative counter either way.
+    const cap = isPremium ? AI_TUTOR_DAILY_CAP : AI_TUTOR_FREE_DAILY_CAP;
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const counterRef = getFirestore().collection("aiTutorCounters").doc(`${decoded.uid}_${todayKey}`);
+    const counterSnap = await counterRef.get();
+    const usedToday = counterSnap.exists ? (counterSnap.data().count || 0) : 0;
+    if (usedToday >= cap) {
+      res.status(429).json({ error: "Daily AI Tutor limit reached", fallbackToStored: true });
+      return;
+    }
+
     const optionsText = Object.entries(options)
       .map(([letter, text]) => `${letter}. ${text}`)
       .join(" | ");
@@ -370,6 +402,12 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
     if (!text) {
       res.status(502).json({ error: "Empty AI response", fallbackToStored: true });
       return;
+    }
+
+    try {
+      await counterRef.set({ count: usedToday + 1 }, { merge: true });
+    } catch (err) {
+      console.error("Failed to update AI Tutor counter:", err); // non-fatal — student still gets their explanation
     }
 
     res.status(200).json({ text: sanitizeLatexDelimiters(text) });

@@ -5623,7 +5623,6 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
 
   try{
     await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION});
-    await setDoc(counterRef,{count:increment(1)},{merge:true});
   }catch(err){console.error("Failed to cache AI Tutor result:",err);}
 
   return{text:data.text,cached:false};

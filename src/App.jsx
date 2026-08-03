@@ -11817,7 +11817,19 @@ export default function App() {
   };
 
   const loadHistory=async uid=>{
-    setHistoryLoaded(false);
+    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+    // Was: always setHistoryLoaded(false) first, showing the skeleton for up
+    // to 10s before falling back to cache. Since Firestore reads are
+    // exhausted tonight, that skeleton wait is a near-guaranteed dead end for
+    // returning users. Now: if a cache exists, render it immediately with no
+    // skeleton, and let the live fetch update silently in the background.
+    const cached=HistoryCache.get(uid);
+    if(cached&&cached.length){
+      setHistory(cached);
+      setHistoryLoaded(true);
+    }else{
+      setHistoryLoaded(false); // no cache yet (first-ever load) — skeleton as before
+    }
     try{
       const q=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
       const snap=await withTimeout(getDocs(q),10000,"Load history");
@@ -11826,16 +11838,17 @@ export default function App() {
         const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
         return at-bt;
       });
-      setHistory(sessions);
+      setHistory(sessions); // silently replaces cached data if the live fetch succeeds
       HistoryCache.set(uid,sessions);
       resyncPendingSessions(uid).catch(e=>console.warn("Pending resync (background):",e)); // fire-and-forget, on purpose
     }catch(e){
       console.error("Load history — falling back to cache:",e);
-      const cached=HistoryCache.get(uid);
       if(cached&&cached.length){
-        setHistory(cached);
         show("Slow connection — showing your last saved data.","info");
       }
+      // if there was no cache at all, historyLoaded is set true in finally
+      // below and the dashboard just renders with an empty history array —
+      // same as today's existing no-cache behavior.
     }
     finally{setHistoryLoaded(true);}
   };

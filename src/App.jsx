@@ -2437,23 +2437,36 @@ function ConfirmQuit({onConfirm,onCancel,answered,total,T}) {
 }
 
 // ─── PREMIUM GATE ─────────────────────────────────────────────────────────────
+// JUPEB 2026 OBJ/CBT window — while this is true, premium messaging frames
+// itself around the actual exam period instead of generic "upgrade" copy.
+// Real, time-boxed urgency (the exam genuinely is happening) rather than an
+// invented countdown.
+function isExamWeek(){
+  const now=new Date();
+  return now>=new Date("2026-08-03T00:00:00")&&now<=new Date("2026-08-14T23:59:59");
+}
+const CREDIQ_STUDENT_COUNT=460; // update as it grows — never fabricate this number
+
 function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T,reason}) {
   const today=new Date().toDateString();
   const usedToday=user?.lastActiveDate===today?(user?.questionsToday||0):0;
   const isStuck=reason==="ai_tutor_stuck";
+  const examWeek=isExamWeek();
   return (
     <div className="modal-overlay" style={{position:"fixed",inset:0,zIndex:200,display:"flex",alignItems:"flex-end"}}>
       <div className="slide-up spring-in" style={{width:"100%",background:"#0f2218",borderRadius:"20px 20px 0 0",padding:"28px 22px 40px",border:"1px solid rgba(184,151,62,0.25)",borderBottom:"none",boxShadow:"0 -8px 40px rgba(0,0,0,0.6)"}}>
         <button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"none",border:"none",cursor:"pointer",color:"rgba(247,243,236,0.3)",padding:8}}><X size={18}/></button>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.5)",letterSpacing:"0.18em",marginBottom:10}}>{isStuck?"YOU'VE USED YOUR 3 FREE EXPLANATIONS TODAY":usedToday>0?`YOU PRACTICED ${usedToday} QUESTIONS TODAY`:"UNLOCK UNLIMITED PRACTICE"}</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",lineHeight:1.1}}>{isStuck?"Don't lose your study flow.":"Go unlimited."}</div>
-          <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:400,color:"rgba(247,243,236,0.5)",fontStyle:"italic",marginTop:6,lineHeight:1.5}}>{isStuck?<>You're building momentum —<br/>keep going with unlimited AI tutoring.</>:<>Every serious JUPEB student<br/>practices 100+ questions daily.</>}</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.5)",letterSpacing:"0.18em",marginBottom:10}}>{examWeek?"JUPEB OBJ/CBT IS ON NOW":isStuck?"YOU'VE USED YOUR 3 FREE EXPLANATIONS TODAY":usedToday>0?`YOU PRACTICED ${usedToday} QUESTIONS TODAY`:"UNLOCK UNLIMITED PRACTICE"}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",lineHeight:1.1}}>{examWeek?"Exam Week Premium":isStuck?"Don't lose your study flow.":"Go unlimited."}</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:400,color:"rgba(247,243,236,0.5)",fontStyle:"italic",marginTop:6,lineHeight:1.5}}>{examWeek?<>Unlimited AI Tutor, Study Notes & Formula Bank —<br/>for the rest of your JUPEB exams.</>:isStuck?<>You're building momentum —<br/>keep going with unlimited AI tutoring.</>:<>Every serious JUPEB student<br/>practices 100+ questions daily.</>}</div>
         </div>
         <div style={{background:"rgba(184,151,62,0.07)",border:"1px solid rgba(184,151,62,0.18)",borderRadius:12,padding:"16px 18px",marginBottom:16}}>
-          {(isStuck
+          {(examWeek
+            ?["Unlimited AI Tutor explanations — no daily limit","Unlimited full AI-generated Study Notes, every topic","Unlimited Formula Bank access","Full CBT simulations with real exam timing","Valid until your JUPEB exams end"]
+            :isStuck
             ?["Understand difficult topics faster","Ask follow-up questions anytime","Learn the way that works for YOU"]
-            :["Unlimited AI Tutor explanations when you get stuck","Unlimited questions every day until August","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Topic drills (001–004) for every weakness"]
+            :["Unlimited AI Tutor explanations when you get stuck","Unlimited full AI-generated Study Notes, every topic","Full CBT simulations with real exam timing","All 4,413 questions — every JUPEB topic covered","Topic drills (001–004) for every weakness"]
           ).map((f,i,arr)=>(
             <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<arr.length-1?10:0}}>
               <CheckCircle size={14} color="#4ade80" strokeWidth={2}/>
@@ -2464,6 +2477,7 @@ function PremiumGate({user,onClose,onGoToWhyPremium,onUpgrade,onRestore,T,reason
         <div style={{textAlign:"center",marginBottom:16}}>
           <div style={{fontFamily:"'Playfair Display',serif",fontSize:36,fontWeight:900,color:"#B8973E",lineHeight:1}}>₦2,500</div>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(247,243,236,0.4)",letterSpacing:"0.1em",marginTop:4}}>ONE-TIME · VALID UNTIL EXAM DAY</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9.5,color:"rgba(184,151,62,0.5)",letterSpacing:"0.06em",marginTop:8}}>{CREDIQ_STUDENT_COUNT}+ students already using CrediQ this year</div>
         </div>
         <button className="btn-press" onClick={()=>{track("payment_started",{uid:user?.uid,reason:reason||"generic"});onUpgrade&&onUpgrade();}} style={{width:"100%",padding:"16px 0",border:"none",borderRadius:10,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 8px 32px rgba(0,75,59,0.45)",marginBottom:10}}>
           {isStuck?"Continue Learning →":"Pay ₦2,500 — Unlock Everything"}
@@ -2577,7 +2591,7 @@ function SideNav({active,onChange,user,dark,setDark,T,onUpgrade,onLogout,onProfi
           <button className="btn-press" onClick={onUpgrade} style={{width:"100%",padding:"10px 14px",marginBottom:12,border:"1px solid rgba(184,151,62,0.35)",borderRadius:9,background:"rgba(184,151,62,0.08)",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left"}}>
             <span style={{fontSize:14}}>✦</span>
             <div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700,letterSpacing:"0.05em"}}>Upgrade to Premium</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700,letterSpacing:"0.05em"}}>{isExamWeek()?"Exam Week Premium":"Upgrade to Premium"}</div>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"rgba(184,151,62,0.5)",marginTop:1}}>₦2,500 · Unlimited until Aug 14</div>
             </div>
           </button>
@@ -5548,6 +5562,21 @@ const AI_TUTOR_PROMPT_VERSION=3;
 const TOPIC_NOTES_PROMPT_VERSION=1;
 const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 
+// Read-only, informational check — NOT the security boundary (that's still
+// enforced server-side in ai-tutor.js against this same counter doc). Used
+// purely to show "X left today" before the student taps, so the cap is felt
+// as something they're about to use up (loss framing) rather than a surprise
+// wall after the fact.
+async function getAiTutorRemainingToday(user){
+  if(!user?.uid||user?.isPremium)return null;
+  try{
+    const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
+    const snap=await getDoc(counterRef);
+    const used=snap.exists()?(snap.data().count||0):0;
+    return Math.max(0,AI_TUTOR_FREE_DAILY_CAP-used);
+  }catch{return null;}
+}
+
 async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return{blocked:"excluded-topic"};
 
@@ -6007,6 +6036,14 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[beginnerLoading,setBeginnerLoading]=useState(false);
   const[blockedReason,setBlockedReason]=useState(null);
   const[delightLine,setDelightLine]=useState(null);
+  const[remainingToday,setRemainingToday]=useState(null); // null = unknown/premium, else a number
+
+  useEffect(()=>{
+    let cancelled=false;
+    getAiTutorRemainingToday(user).then(r=>{if(!cancelled)setRemainingToday(r);});
+    return()=>{cancelled=true;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[user?.uid]);
 
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return null;
 
@@ -6017,6 +6054,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
       setExplanation(result.text);
       setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
       setState("shown");
+      if(!result.cached&&remainingToday!=null)setRemainingToday(r=>Math.max(0,(r||0)-1));
     }
     else if(result.blocked==="daily-cap-reached"&&!user?.isPremium){
       // Let them feel it was actually working before revealing the wall —
@@ -6084,12 +6122,19 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   }
 
   return(
-    <button onClick={handleTap} disabled={state==="loading"} className="btn-press"
-      style={{marginTop:12,width:"100%",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${T.gold}`,
-        background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
-        letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
-      {state==="loading"?"Thinking…":"Help me understand this better"}
-    </button>
+    <>
+      <button onClick={handleTap} disabled={state==="loading"} className="btn-press"
+        style={{marginTop:12,width:"100%",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${T.gold}`,
+          background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
+          letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
+        {state==="loading"?"Thinking…":"Help me understand this better"}
+      </button>
+      {remainingToday!=null&&(
+        <div style={{marginTop:6,textAlign:"center",fontFamily:"'DM Mono',monospace",fontSize:9.5,color:T.muted,letterSpacing:"0.03em"}}>
+          {remainingToday>0?`${remainingToday} explanation${remainingToday===1?"":"s"} left today`:"Free explanations used for today — resets at midnight"}
+        </div>
+      )}
+    </>
   );
 }
 

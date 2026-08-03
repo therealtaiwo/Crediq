@@ -5589,7 +5589,9 @@ async function getAiTutorRemainingToday(user){
   }catch{return null;}
 }
 
-async function getAiTutorExplanation({user,question,questionId,studentAnswer,style}){
+async function getAiTutorExplanation({user,question,questionId,studentAnswer,style,onStep}){
+  const step=s=>{try{onStep&&onStep(s);}catch{}};
+  step("starting…");
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return{blocked:"excluded-topic"};
 
   const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
@@ -5600,6 +5602,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   // leaving the button stuck on "Thinking…" forever. Now fails open: no
   // cache found just means we skip straight to a fresh generation, same as
   // a normal cache miss.
+  step("checking cache…");
   let qData=null;
   try{
     const qSnap=await withFirestoreTimeout(getDoc(qRef));
@@ -5619,6 +5622,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   // threw uncaught. Now fails open: an unknown count just skips this
   // client-side pre-check and lets the request through — the server-side
   // in-memory counter in ai-tutor.js is the real cap enforcement anyway.
+  step("checking daily limit…");
   const cap=user?.isPremium?AI_TUTOR_DAILY_CAP:AI_TUTOR_FREE_DAILY_CAP;
   let count=0;
   try{
@@ -5631,7 +5635,9 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
 
   let res;
   try{
+    step("getting login token…");
     const token=await withFirestoreTimeout(auth.currentUser.getIdToken());
+    step("asking the AI…");
     res=await withFirestoreTimeout(fetch("/api/ai-tutor",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
@@ -5646,12 +5652,14 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   if(res.status===429)return{blocked:"rate-limited"};
   if(!res.ok)return{blocked:"generation-failed"};
 
+  step("reading response…");
   let data;
   try{
     data=await withFirestoreTimeout(res.json());
   }catch(err){return{blocked:"generation-failed"};}
   if(!data.text)return{blocked:"generation-failed"};
 
+  step("saving…");
   try{
     await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION});
   }catch(err){console.error("Failed to cache AI Tutor result:",err);}
@@ -5693,8 +5701,8 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
 
   let res;
   try{
-    const token=await auth.currentUser.getIdToken();
-    res=await fetch("/api/ai-tutor",{
+    const token=await withFirestoreTimeout(auth.currentUser.getIdToken());
+    res=await withFirestoreTimeout(fetch("/api/ai-tutor",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
@@ -5702,13 +5710,16 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
         courseCode,courseName,courseDesc,
         keywords:courseKeywords.slice(0,25),
       })
-    });
+    }),20000);
   }catch(err){return{blocked:"network-error"};}
 
   if(res.status===429)return{blocked:"rate-limited"};
   if(!res.ok)return{blocked:"generation-failed"};
 
-  const data=await res.json();
+  let data;
+  try{
+    data=await withFirestoreTimeout(res.json());
+  }catch(err){return{blocked:"generation-failed"};}
   if(!data.text)return{blocked:"generation-failed"};
 
   try{
@@ -6075,6 +6086,10 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[blockedReason,setBlockedReason]=useState(null);
   const[delightLine,setDelightLine]=useState(null);
   const[remainingToday,setRemainingToday]=useState(null); // null = unknown/premium, else a number
+  // TEMP DIAGNOSTIC — shows live stage text on the button instead of a
+  // generic "Thinking…" so a stuck request shows exactly which step it
+  // froze on. Safe to remove once the hang is found.
+  const[debugStep,setDebugStep]=useState("");
 
   useEffect(()=>{
     let cancelled=false;
@@ -6087,8 +6102,9 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
 
   const handleTap=async()=>{
     setState("loading");
+    setDebugStep("");
     try{
-      const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
+      const result=await getAiTutorExplanation({user,question,questionId,studentAnswer,onStep:setDebugStep});
       if(result.text){
         setExplanation(result.text);
         setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
@@ -6181,7 +6197,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
         style={{marginTop:12,width:"100%",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${T.gold}`,
           background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,
           letterSpacing:"0.04em",cursor:state==="loading"?"default":"pointer"}}>
-        {state==="loading"?"Thinking…":"Help me understand this better"}
+        {state==="loading"?(debugStep||"Thinking…"):"Help me understand this better"}
       </button>
       {remainingToday!=null&&(
         <div style={{marginTop:6,textAlign:"center",fontFamily:"'DM Mono',monospace",fontSize:9.5,color:T.muted,letterSpacing:"0.03em"}}>
@@ -6206,10 +6222,16 @@ function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc
 
   const handleTap=async()=>{
     setState("loading");
-    const result=await getTopicNotes({user,subject,topic,courseCode,courseName,courseDesc,keywords});
-    if(result.text){setNotesText(result.text);setState("shown");}
-    else if(result.blocked==="premium-required"){setState("paywall");}
-    else{setBlockedReason(result.blocked);setState("blocked");}
+    try{
+      const result=await getTopicNotes({user,subject,topic,courseCode,courseName,courseDesc,keywords});
+      if(result.text){setNotesText(result.text);setState("shown");}
+      else if(result.blocked==="premium-required"){setState("paywall");}
+      else{setBlockedReason(result.blocked);setState("blocked");}
+    }catch(err){
+      console.error("Topic Notes unexpected failure:",err);
+      setBlockedReason("generation-failed");
+      setState("blocked");
+    }
   };
 
   if(state==="shown"){

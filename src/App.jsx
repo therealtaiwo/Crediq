@@ -5631,8 +5631,8 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
 
   let res;
   try{
-    const token=await auth.currentUser.getIdToken();
-    res=await fetch("/api/ai-tutor",{
+    const token=await withFirestoreTimeout(auth.currentUser.getIdToken());
+    res=await withFirestoreTimeout(fetch("/api/ai-tutor",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
@@ -5640,13 +5640,16 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
         options:question.options,correctAnswer:question.correctAnswer,studentAnswer,
         explanation:question.explanation,difficulty:question.difficulty,style,isLastFreeUse
       })
-    });
+    }),20000); // generation genuinely takes several seconds — longer window than the Firestore reads
   }catch(err){return{blocked:"network-error"};}
 
   if(res.status===429)return{blocked:"rate-limited"};
   if(!res.ok)return{blocked:"generation-failed"};
 
-  const data=await res.json();
+  let data;
+  try{
+    data=await withFirestoreTimeout(res.json());
+  }catch(err){return{blocked:"generation-failed"};}
   if(!data.text)return{blocked:"generation-failed"};
 
   try{

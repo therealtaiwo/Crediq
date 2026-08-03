@@ -5567,11 +5567,23 @@ const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 // purely to show "X left today" before the student taps, so the cap is felt
 // as something they're about to use up (loss framing) rather than a surprise
 // wall after the fact.
+// Firestore reads have no built-in client-side timeout — on a dead-but-
+// still-"connected" link, or mid-outage, a getDoc() call can hang
+// indefinitely: never resolves, never rejects, so neither the try's
+// success path nor the catch ever fires. This races any promise against a
+// hard deadline so callers always get SOME outcome instead of hanging the
+// UI on "Thinking…" forever. Same pattern as the withTimeout used for
+// getDocs() elsewhere in this file.
+const withFirestoreTimeout=(promise,ms=6000)=>Promise.race([
+  promise,
+  new Promise((_,reject)=>setTimeout(()=>reject(new Error("Firestore read timed out")),ms)),
+]);
+
 async function getAiTutorRemainingToday(user){
   if(!user?.uid||user?.isPremium)return null;
   try{
     const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
-    const snap=await getDoc(counterRef);
+    const snap=await withFirestoreTimeout(getDoc(counterRef));
     const used=snap.exists()?(snap.data().count||0):0;
     return Math.max(0,AI_TUTOR_FREE_DAILY_CAP-used);
   }catch{return null;}
@@ -5590,7 +5602,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   // a normal cache miss.
   let qData=null;
   try{
-    const qSnap=await getDoc(qRef);
+    const qSnap=await withFirestoreTimeout(getDoc(qRef));
     qData=qSnap.data();
   }catch(err){console.error("AI Tutor cache read failed (treating as cache miss):",err);}
   const cached=qData?.[cacheField];
@@ -5611,7 +5623,7 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   let count=0;
   try{
     const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
-    const counterSnap=await getDoc(counterRef);
+    const counterSnap=await withFirestoreTimeout(getDoc(counterRef));
     count=counterSnap.exists()?(counterSnap.data().count||0):0;
   }catch(err){console.error("AI Tutor counter read failed (skipping client-side cap check):",err);}
   if(count>=cap)return{blocked:"daily-cap-reached"};
@@ -5662,7 +5674,7 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   // as a normal cache miss.
   let noteData=null;
   try{
-    const noteSnap=await getDoc(noteRef);
+    const noteSnap=await withFirestoreTimeout(getDoc(noteRef));
     noteData=noteSnap.exists()?noteSnap.data():null;
   }catch(err){console.error("Topic notes cache read failed (treating as cache miss):",err);}
   const cachedContent=noteData?.content;
@@ -6072,29 +6084,45 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
 
   const handleTap=async()=>{
     setState("loading");
-    const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
-    if(result.text){
-      setExplanation(result.text);
-      setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
-      setState("shown");
-      if(!result.cached&&remainingToday!=null)setRemainingToday(r=>Math.max(0,(r||0)-1));
+    try{
+      const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
+      if(result.text){
+        setExplanation(result.text);
+        setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
+        setState("shown");
+        if(!result.cached&&remainingToday!=null)setRemainingToday(r=>Math.max(0,(r||0)-1));
+      }
+      else if(result.blocked==="daily-cap-reached"&&!user?.isPremium){
+        // Let them feel it was actually working before revealing the wall —
+        // don't block before they've even pressed the button. A believable
+        // "thinking" pause, then the explanation is framed as ready and
+        // waiting, not denied.
+        await new Promise(r=>setTimeout(r,1400));
+        setState("paywall-tease");
+      }
+      else{setBlockedReason(result.blocked);setState("blocked");}
+    }catch(err){
+      // Defense in depth: getAiTutorExplanation should never throw (every
+      // internal await is guarded), but if something unexpected does slip
+      // through, this guarantees the button still resolves out of
+      // "Thinking…" instead of hanging forever.
+      console.error("AI Tutor unexpected failure:",err);
+      setBlockedReason("generation-failed");
+      setState("blocked");
     }
-    else if(result.blocked==="daily-cap-reached"&&!user?.isPremium){
-      // Let them feel it was actually working before revealing the wall —
-      // don't block before they've even pressed the button. A believable
-      // "thinking" pause, then the explanation is framed as ready and
-      // waiting, not denied.
-      await new Promise(r=>setTimeout(r,1400));
-      setState("paywall-tease");
-    }
-    else{setBlockedReason(result.blocked);setState("blocked");}
   };
 
   const handleSimpler=async()=>{
     if(beginnerExplanation){setViewMode("beginner");return;} // already fetched, free toggle
     setBeginnerLoading(true);
-    const result=await getAiTutorExplanation({user,question,questionId,studentAnswer,style:"beginner"});
-    setBeginnerLoading(false);
+    let result={};
+    try{
+      result=await getAiTutorExplanation({user,question,questionId,studentAnswer,style:"beginner"});
+    }catch(err){
+      console.error("AI Tutor (simpler) unexpected failure:",err);
+    }finally{
+      setBeginnerLoading(false);
+    }
     if(result.text){setBeginnerExplanation(result.text);setViewMode("beginner");}
     // silent fail — student still has the standard explanation on screen
   };

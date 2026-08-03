@@ -12246,7 +12246,15 @@ export default function App() {
 
     // Write premium to Firestore — setDoc+merge works even if doc has issues
     try{
-      const expiry=new Date("2026-08-03").toISOString();
+    // Every purchase gets AT LEAST 30 days, even this close to the exam —
+    // previously everyone shared the same hardcoded Aug 3 expiry regardless
+    // of purchase date, so someone paying in the final days got almost no
+    // access, and the entire premium cohort was set to expire simultaneously
+    // on the same day instead of on individual rolling windows.
+    const MIN_PREMIUM_DAYS=30;
+    const minExpiry=new Date(Date.now()+MIN_PREMIUM_DAYS*24*60*60*1000);
+    const examDate=new Date("2026-08-03");
+    const expiry=(examDate>minExpiry?examDate:minExpiry).toISOString();
       await setDoc(doc(db,"users",user.uid),{
         isPremium:true,
         premiumExpiry:expiry,

@@ -5659,10 +5659,12 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   }catch(err){return{blocked:"generation-failed"};}
   if(!data.text)return{blocked:"generation-failed"};
 
-  step("saving…");
-  try{
-    await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION});
-  }catch(err){console.error("Failed to cache AI Tutor result:",err);}
+  // Fire-and-forget: caching is a nice-to-have, never something the student
+  // should have to wait on. This was previously `await`ed with no timeout —
+  // a hung Firestore write here left the button stuck on "Thinking…" even
+  // after a perfectly good AI response had already come back.
+  updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION})
+    .catch(err=>console.error("Failed to cache AI Tutor result:",err));
 
   return{text:data.text,cached:false};
 }
@@ -5722,13 +5724,12 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   }catch(err){return{blocked:"generation-failed"};}
   if(!data.text)return{blocked:"generation-failed"};
 
-  try{
-    await setDoc(noteRef,{
-      content:data.text,subject,topic:topic||"",courseCode,
-      generatedAt:new Date().toISOString(),
-      aiTutorPromptVersion:TOPIC_NOTES_PROMPT_VERSION,
-    },{merge:true});
-  }catch(err){console.error("Failed to cache topic notes:",err);}
+  // Fire-and-forget — same reasoning as AI Tutor's cache write above.
+  setDoc(noteRef,{
+    content:data.text,subject,topic:topic||"",courseCode,
+    generatedAt:new Date().toISOString(),
+    aiTutorPromptVersion:TOPIC_NOTES_PROMPT_VERSION,
+  },{merge:true}).catch(err=>console.error("Failed to cache topic notes:",err));
 
   return{text:data.text,cached:false};
 }

@@ -8757,7 +8757,13 @@ function FounderDashboardScreen({onBack,T,showToast}){
     }
     isRefresh?setRefreshing(true):setLoading(true);
     try{
-      const usersSnap=await getDocs(query(collection(db,"users"),limit(500)));
+      // No cap — the 500-doc limit here used to silently undercount once
+      // the collection grew past it, and with no orderBy, WHICH 500 docs
+      // came back wasn't even stable between reloads (arbitrary Firestore
+      // default order), making stats look like they were "miscounting"
+      // randomly. The 5-min module-level cache above absorbs the cost of
+      // repeat dashboard opens, so reading the full collection here is fine.
+      const usersSnap=await getDocs(collection(db,"users"));
       const users=usersSnap.docs.map(d=>({id:d.id,...d.data()}));
       setAllUsers(users);
       // Test accounts are excluded from every business metric below — they're

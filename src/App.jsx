@@ -1072,16 +1072,7 @@ const IDB = {
         const req = db.transaction("cache","readonly").objectStore("cache").get(key);
         req.onsuccess = () => {
           const r = req.result;
-          // Bumped from 24h to 7 days — questions change rarely (new ones added
-          // occasionally, not constantly), and this cache is the single biggest
-          // lever on Firestore read volume: a full re-fetch of a subject's
-          // question bank is hundreds to low-thousands of document reads, and
-          // that was happening for every student once per day. At 460+ students,
-          // even a modest fraction re-fetching on the same day can blow through
-          // the entire 50,000/day free-tier quota on its own — which is what
-          // caused today's ~14hr outage. A student will now go up to a week
-          // between full refetches instead of one day.
-          res(r && Date.now()-r.ts < 7*24*60*60*1000 ? r.data : null);
+          res(r && Date.now()-r.ts < 24*60*60*1000 ? r.data : null);
         };
         req.onerror = () => res(null);
       });
@@ -5592,8 +5583,16 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
   const versionField=style==="beginner"?"aiTutorPromptVersionBeginner":"aiTutorPromptVersion";
   const qRef=doc(db,"questions",questionId);
-  const qSnap=await getDoc(qRef);
-  const qData=qSnap.data();
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: an unguarded getDoc() — on quota exhaustion this threw uncaught,
+  // leaving the button stuck on "Thinking…" forever. Now fails open: no
+  // cache found just means we skip straight to a fresh generation, same as
+  // a normal cache miss.
+  let qData=null;
+  try{
+    const qSnap=await getDoc(qRef);
+    qData=qSnap.data();
+  }catch(err){console.error("AI Tutor cache read failed (treating as cache miss):",err);}
   const cached=qData?.[cacheField];
   const cacheIsCurrent=qData?.[versionField]===AI_TUTOR_PROMPT_VERSION;
   if(cached&&cacheIsCurrent)return{text:cached,cached:true};
@@ -5603,10 +5602,18 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   // the real security boundary — ai-tutor.js enforces the same cap
   // server-side against the same counter doc, since a free user has no
   // reason not to bypass a client-only check.
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: an unguarded getDoc() on aiTutorCounters. On quota exhaustion this
+  // threw uncaught. Now fails open: an unknown count just skips this
+  // client-side pre-check and lets the request through — the server-side
+  // in-memory counter in ai-tutor.js is the real cap enforcement anyway.
   const cap=user?.isPremium?AI_TUTOR_DAILY_CAP:AI_TUTOR_FREE_DAILY_CAP;
-  const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
-  const counterSnap=await getDoc(counterRef);
-  const count=counterSnap.exists()?(counterSnap.data().count||0):0;
+  let count=0;
+  try{
+    const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
+    const counterSnap=await getDoc(counterRef);
+    count=counterSnap.exists()?(counterSnap.data().count||0):0;
+  }catch(err){console.error("AI Tutor counter read failed (skipping client-side cap check):",err);}
   if(count>=cap)return{blocked:"daily-cap-reached"};
   const isLastFreeUse=!user?.isPremium&&count===AI_TUTOR_FREE_DAILY_CAP-1;
 
@@ -5648,8 +5655,16 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   const courseCode=explicitCourseCode||getCourseUnit(subject,topic)||"";
   const noteId=`${subject}_${topicSlug(topic)}`.replace(/[\/\.#\[\]]/g,"_");
   const noteRef=doc(db,"topicNotes",noteId);
-  const noteSnap=await getDoc(noteRef);
-  const noteData=noteSnap.exists()?noteSnap.data():null;
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: an unguarded getDoc() — on quota exhaustion this threw uncaught,
+  // leaving Notes mode stuck with no fallback state at all. Now fails open:
+  // no cache found just means we skip straight to a fresh generation, same
+  // as a normal cache miss.
+  let noteData=null;
+  try{
+    const noteSnap=await getDoc(noteRef);
+    noteData=noteSnap.exists()?noteSnap.data():null;
+  }catch(err){console.error("Topic notes cache read failed (treating as cache miss):",err);}
   const cachedContent=noteData?.content;
   const cacheIsCurrent=noteData?.aiTutorPromptVersion===TOPIC_NOTES_PROMPT_VERSION;
   if(cachedContent&&cacheIsCurrent)return{text:cachedContent,cached:true};
@@ -11826,7 +11841,19 @@ export default function App() {
   };
 
   const loadHistory=async uid=>{
-    setHistoryLoaded(false);
+    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+    // Was: always setHistoryLoaded(false) first, showing the skeleton for up
+    // to 10s before falling back to cache. Since Firestore reads are
+    // exhausted tonight, that skeleton wait is a near-guaranteed dead end for
+    // returning users. Now: if a cache exists, render it immediately with no
+    // skeleton, and let the live fetch update silently in the background.
+    const cached=HistoryCache.get(uid);
+    if(cached&&cached.length){
+      setHistory(cached);
+      setHistoryLoaded(true);
+    }else{
+      setHistoryLoaded(false); // no cache yet (first-ever load) — skeleton as before
+    }
     try{
       const q=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
       const snap=await withTimeout(getDocs(q),10000,"Load history");
@@ -11835,16 +11862,17 @@ export default function App() {
         const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
         return at-bt;
       });
-      setHistory(sessions);
+      setHistory(sessions); // silently replaces cached data if the live fetch succeeds
       HistoryCache.set(uid,sessions);
       resyncPendingSessions(uid).catch(e=>console.warn("Pending resync (background):",e)); // fire-and-forget, on purpose
     }catch(e){
       console.error("Load history — falling back to cache:",e);
-      const cached=HistoryCache.get(uid);
       if(cached&&cached.length){
-        setHistory(cached);
         show("Slow connection — showing your last saved data.","info");
       }
+      // if there was no cache at all, historyLoaded is set true in finally
+      // below and the dashboard just renders with an empty history array —
+      // same as today's existing no-cache behavior.
     }
     finally{setHistoryLoaded(true);}
   };

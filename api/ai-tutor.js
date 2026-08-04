@@ -15,65 +15,6 @@ if (!getApps().length) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-// Added: Aug 3, 2026 — Firestore daily read quota exhausted mid-exam-night
-// (RESOURCE_EXHAUSTED confirmed in Firebase logs). Quota resets at midnight
-// Pacific / next UTC day. This block + everywhere else tagged
-// "TEMP EMERGENCY PATCH" below should be reverted tomorrow once the
-// permanent fix (Firebase Auth custom claims for isPremium, so premium
-// status travels on the verified ID token with zero Firestore reads) is in.
-//
-// Hardcoded allowlist of verified premium emails (pulled from Firestore
-// console screenshots since Firestore itself can't be queried right now).
-// Matched against decoded.email from verifyIdToken() — that's Firebase AUTH,
-// a separate service from Firestore, unaffected by this quota outage.
-const TEMP_PREMIUM_EMAILS = new Set([
-  "ogunsanyaoyindamola06@gmail.com",
-  "adenekanmoses2009@gmail.com",
-  "praiseoloyede358@gmail.com",
-  "feranmiisrea1380@gmail.com",
-  "sarahadeosun27@gmail.com",
-  "olamijuwonjohn@gmail.com",
-  "miracleodukoya5@gmail.com",
-  "doyeafilakatamara@gmail.com",
-  "sira72026@gmail.com",
-  "ogbeborfeyisola@gmail.com",
-  "violetugwu6@gmail.com",
-  "olumidegoodness735@gmail.com",
-  "fathiabell009@gmail.com",
-  "boluwatifebobade048@gmail.com",
-  "afolabiboluwatife103@gmail.com",
-  "wittysage143@gmail.com",
-  "jommymaks@gmail.com",
-  "elenasulufinela@gmail.com",
-  "d22343480@gmail.com",
-  "icent450@gmail.com",
-  "ohizmiracool@gmail.com",
-  "akindess210@gmail.com",
-  "softflame38@gmail.com",
-  "manuellaodimayo@gmail.com",
-  "luyipediaacademy@gmail.com",
-  "ismailabolade27@gmail.com",
-  "crediqapp@gmail.com",
-  "favourwrites4@gmail.com",
-  "adewoletojuba09@gmail.com",
-  "elijaholuyinkais@gmail.com",
-  "stephrex602@gmail.com",
-  "davidawaye2009@gmail.com",
-  "taiwooloyedewrites@gmail.com",
-]);
-
-// In-memory daily-cap counter — replaces the Firestore aiTutorCounters
-// read+write for tonight. Lives only in this function instance's memory, so
-// it resets on a cold start (Vercel may spin up multiple instances under
-// load, so the cap is approximate, not exact, tonight) — but it's a real
-// per-instance limiter, not "no limit at all". Key: `${uid}_${dateKey}`.
-const TEMP_inMemoryCounters = new Map();
-// TEMP EMERGENCY PATCH block ends further down where it's used — see the
-// two spots tagged "TEMP EMERGENCY PATCH" inside the handler below.
-// ═══════════════════════════════════════════════════════════════════════════
-
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "llama-3.3-70b-versatile"; // switched from 8B after it made an
 // independent arithmetic error (1/0.80 miscalculated) even with the correct
@@ -125,6 +66,15 @@ async function callGroqWithFallback({ apiKey, systemPrompt, userPrompt, maxToken
 
   return { res, usedFallback };
 }
+
+// Phase 1 of the follow-up learning system (see Learning Engine Architecture
+// v1.md). Explain mode now asks for 3-5 educational follow-up questions in
+// the SAME generation call as the explanation — near-zero marginal cost,
+// bundled into one Groq request rather than a second one. This delimiter
+// splits the model's raw text output into the explanation part (unchanged
+// downstream handling) and a JSON block (new, parsed separately). Follow-ups
+// are NOT clickable yet — this phase only generates and caches them.
+const FOLLOWUP_DELIMITER = "\n---FOLLOWUPS---\n";
 
 const BEGINNER_ADDITION = `
 
@@ -197,7 +147,15 @@ Rules:
 - Use simple English, conversational tone throughout — never sound like a textbook or an AI assistant.
 - Follow the same solving method as the stored explanation — do not introduce a different formula or approach.
 - Word budget scales with difficulty and how much this instruction set requires — roughly 200 words for Easy, 500 for Medium, 700 for Hard. This is real room, not a hard ceiling to undershoot — use what depth requires, especially for the expanded "Why this is correct" section.
-- If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.`;
+- If you find yourself deriving a different final answer than the one given to you, stop — you have drifted from the stored method. Return to it.
+
+AFTER the full explanation above (all sections, exactly as specified), on its own new line write exactly:
+${FOLLOWUP_DELIMITER.trim()}
+Then, on the line(s) after that, output ONLY a JSON array of exactly 4 objects — no markdown code fences, no commentary before or after it. These are follow-up questions a genuinely curious student would ask next, after reading this explanation — not generic definitional questions. Each object must have exactly these three keys:
+- "question": a short, specific, EDUCATIONAL follow-up (e.g. "Why is fluorine the most electronegative element?" or "Easy trick to remember this trend" — never a bare "What is X?")
+- "difficulty": exactly one of "beginner", "intermediate", "advanced"
+- "type": exactly one of "understand", "memorize", "mistake", "practice", "related"
+Cover a genuine mix of types and difficulties across the 4 — don't make them all the same type or all the same difficulty.`;
 
 const NOTES_SYSTEM_PROMPT = `You are writing a full study chapter on one topic for a JUPEB student — not a quick summary, not a cheat sheet. Write like the best tutor they've ever had is sitting with them and has all the time in the world to make sure they truly get it.
 
@@ -291,15 +249,27 @@ export default async function handler(req, res) {
     return;
   }
 
-  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-  // Was: a Firestore `users/{uid}` read to check isPremium. Replaced with the
-  // hardcoded allowlist above, matched on decoded.email (Firebase Auth,
-  // verified server-side via verifyIdToken — not user-supplied, so this is
-  // not a spoofable check). We lose the old "Account not found" 403 for a
-  // deleted/nonexistent user doc, but a valid verified ID token already means
-  // this is a real authenticated Firebase user, so that's an acceptable gap
-  // for one night.
-  const isPremium = TEMP_PREMIUM_EMAILS.has(decoded.email);
+  // Real source of truth for premium status: a Firestore `users/{uid}` read.
+  // If the user doc doesn't exist at all (e.g. deleted account), that's a
+  // genuine "Account not found" — 403. If it exists but isPremium isn't
+  // explicitly true, they're a free user — NOT an error. (The emergency
+  // patch's own comment flagged that the pre-patch code used to require
+  // isPremium===true unconditionally here, silently 403-ing every free
+  // user's Explain-mode request regardless of their daily count. That bug
+  // stays fixed — this restores real data without reintroducing it.)
+  let userSnap;
+  try {
+    userSnap = await getFirestore().collection("users").doc(decoded.uid).get();
+  } catch (err) {
+    console.error("Failed to read user doc:", err);
+    res.status(500).json({ error: "Unexpected server error" });
+    return;
+  }
+  if (!userSnap.exists) {
+    res.status(403).json({ error: "Account not found" });
+    return;
+  }
+  const isPremium = userSnap.data()?.isPremium === true;
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -405,16 +375,14 @@ Write full JUPEB-level study notes on this topic.`;
     // Real server-side enforcement of the daily cap. The Firestore rule for
     // aiTutorCounters only allows premium users to WRITE to it directly, so a
     // free user's own client-side increment silently fails (caught, logged,
-    // ignored) — that's fine now, because the Admin SDK here bypasses
-    // security rules entirely and is the authoritative counter either way.
+    // ignored) — that's fine, because the Admin SDK here bypasses security
+    // rules entirely and is the authoritative counter either way.
     const cap = isPremium ? AI_TUTOR_DAILY_CAP : AI_TUTOR_FREE_DAILY_CAP;
     const todayKey = new Date().toISOString().slice(0, 10);
-    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-    // Was: getFirestore().collection("aiTutorCounters").doc(...).get(). This
-    // in-memory Map replaces that read — approximate (per warm instance,
-    // resets on cold start) but avoids the Firestore call entirely.
     const counterKey = `${decoded.uid}_${todayKey}`;
-    const usedToday = TEMP_inMemoryCounters.get(counterKey) || 0;
+    const counterRef = getFirestore().collection("aiTutorCounters").doc(counterKey);
+    const counterSnap = await counterRef.get();
+    const usedToday = counterSnap.exists ? (counterSnap.data().count || 0) : 0;
     if (usedToday >= cap) {
       res.status(429).json({ error: "Daily AI Tutor limit reached", fallbackToStored: true });
       return;
@@ -438,7 +406,9 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
       apiKey,
       systemPrompt: SYSTEM_PROMPT + (style === "beginner" ? BEGINNER_ADDITION : ""),
       userPrompt,
-      maxTokens: 1400,
+      // Bumped 1400 -> 1600: same explanation budget as before, plus room for
+      // the new 4-item follow-ups JSON block (~150-250 tokens typically).
+      maxTokens: 1600,
       allowFallback: true,
     });
 
@@ -453,19 +423,44 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
     }
 
     const aiData = await aiRes.json();
-    const text = aiData?.choices?.[0]?.message?.content;
+    const rawText = aiData?.choices?.[0]?.message?.content;
     if (usedFallback) console.warn(`Explain served by fallback model (${FALLBACK_MODEL}) for ${subject} / ${topic || "N/A"}`);
 
-    if (!text) {
+    if (!rawText) {
       res.status(502).json({ error: "Empty AI response", fallbackToStored: true });
       return;
     }
 
-    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-    // Was: counterRef.set({ count: usedToday + 1 }, { merge: true }).
-    TEMP_inMemoryCounters.set(counterKey, usedToday + 1);
+    // Split explanation from the follow-ups JSON block. This is deliberately
+    // fault-tolerant: if the model omits the delimiter, mangles the JSON, or
+    // returns something unparseable, the explanation still ships exactly as
+    // it did before this feature existed — followUps just comes back empty.
+    // Explanation generation must never be allowed to break because of a
+    // follow-ups parsing hiccup (graceful degradation, per architecture doc).
+    const [explanationPart, followUpsPart] = rawText.split(FOLLOWUP_DELIMITER);
+    const text = (explanationPart || rawText).trim();
 
-    res.status(200).json({ text: sanitizeLatexDelimiters(text) });
+    const VALID_DIFFICULTIES = new Set(["beginner", "intermediate", "advanced"]);
+    const VALID_TYPES = new Set(["understand", "memorize", "mistake", "practice", "related"]);
+    let followUps = [];
+    if (followUpsPart) {
+      try {
+        const parsed = JSON.parse(followUpsPart.trim());
+        if (Array.isArray(parsed)) {
+          followUps = parsed
+            .filter(f => f && typeof f.question === "string" && f.question.trim()
+              && VALID_DIFFICULTIES.has(f.difficulty) && VALID_TYPES.has(f.type))
+            .slice(0, 5)
+            .map(f => ({ question: f.question.trim(), difficulty: f.difficulty, type: f.type }));
+        }
+      } catch (err) {
+        console.warn(`Follow-up JSON parse failed for ${subject} / ${topic || "N/A"} — continuing without follow-ups:`, err.message);
+      }
+    }
+
+    await counterRef.set({ count: usedToday + 1 }, { merge: true });
+
+    res.status(200).json({ text: sanitizeLatexDelimiters(text), followUps });
 
   } catch (err) {
     console.error("ai-tutor function error:", err);

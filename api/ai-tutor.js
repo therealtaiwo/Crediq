@@ -15,6 +15,68 @@ if (!getApps().length) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+// Added: Aug 3, 2026 — Firestore daily read quota exhausted mid-exam-night
+// (RESOURCE_EXHAUSTED confirmed in Firebase logs). Quota resets at midnight
+// Pacific / next UTC day. This block + everywhere else tagged
+// "TEMP EMERGENCY PATCH" below should be reverted tomorrow once the
+// permanent fix (Firebase Auth custom claims for isPremium, so premium
+// status travels on the verified ID token with zero Firestore reads) is in.
+//
+// Hardcoded allowlist of verified premium emails (pulled from Firestore
+// console screenshots since Firestore itself can't be queried right now).
+// Matched against decoded.email from verifyIdToken() — that's Firebase AUTH,
+// a separate service from Firestore, unaffected by this quota outage.
+const TEMP_PREMIUM_EMAILS = new Set([
+  "ogunsanyaoyindamola06@gmail.com",
+  "adenekanmoses2009@gmail.com",
+  "praiseoloyede358@gmail.com",
+  "feranmiisrea1380@gmail.com",
+  "sarahadeosun27@gmail.com",
+  "olamijuwonjohn@gmail.com",
+  "miracleodukoya5@gmail.com",
+  "doyeafilakatamara@gmail.com",
+  "sira72026@gmail.com",
+  "ogbeborfeyisola@gmail.com",
+  "violetugwu6@gmail.com",
+  "olumidegoodness735@gmail.com",
+  "fathiabell009@gmail.com",
+  "boluwatifebobade048@gmail.com",
+  "afolabiboluwatife103@gmail.com",
+  "wittysage143@gmail.com",
+  "jommymaks@gmail.com",
+  "elenasulufinela@gmail.com",
+  "d22343480@gmail.com",
+  "icent450@gmail.com",
+  "ohizmiracool@gmail.com",
+  "akindess210@gmail.com",
+  "softflame38@gmail.com",
+  "manuellaodimayo@gmail.com",
+  "luyipediaacademy@gmail.com",
+  "ismailabolade27@gmail.com",
+  "crediqapp@gmail.com",
+  "favourwrites4@gmail.com",
+  "adewoletojuba09@gmail.com",
+  "elijaholuyinkais@gmail.com",
+  "stephrex602@gmail.com",
+  "davidawaye2009@gmail.com",
+  "taiwooloyedewrites@gmail.com",
+  "seteminire013@gmail.com",
+  "motiowoaje@gmail.com",
+  "adeniranmubarak18@gmail.com",
+]);
+
+// In-memory daily-cap counter — replaces the Firestore aiTutorCounters
+// read+write for tonight. Lives only in this function instance's memory, so
+// it resets on a cold start (Vercel may spin up multiple instances under
+// load, so the cap is approximate, not exact, tonight) — but it's a real
+// per-instance limiter, not "no limit at all". Key: `${uid}_${dateKey}`.
+const TEMP_inMemoryCounters = new Map();
+// TEMP EMERGENCY PATCH block ends further down where it's used — see the
+// two spots tagged "TEMP EMERGENCY PATCH" inside the handler below.
+// ═══════════════════════════════════════════════════════════════════════════
+
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "llama-3.3-70b-versatile"; // switched from 8B after it made an
 // independent arithmetic error (1/0.80 miscalculated) even with the correct
@@ -249,27 +311,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Real source of truth for premium status: a Firestore `users/{uid}` read.
-  // If the user doc doesn't exist at all (e.g. deleted account), that's a
-  // genuine "Account not found" — 403. If it exists but isPremium isn't
-  // explicitly true, they're a free user — NOT an error. (The emergency
-  // patch's own comment flagged that the pre-patch code used to require
-  // isPremium===true unconditionally here, silently 403-ing every free
-  // user's Explain-mode request regardless of their daily count. That bug
-  // stays fixed — this restores real data without reintroducing it.)
-  let userSnap;
-  try {
-    userSnap = await getFirestore().collection("users").doc(decoded.uid).get();
-  } catch (err) {
-    console.error("Failed to read user doc:", err);
-    res.status(500).json({ error: "Unexpected server error" });
-    return;
-  }
-  if (!userSnap.exists) {
-    res.status(403).json({ error: "Account not found" });
-    return;
-  }
-  const isPremium = userSnap.data()?.isPremium === true;
+  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+  // Was: a Firestore `users/{uid}` read to check isPremium. Replaced with the
+  // hardcoded allowlist above, matched on decoded.email (Firebase Auth,
+  // verified server-side via verifyIdToken — not user-supplied, so this is
+  // not a spoofable check). We lose the old "Account not found" 403 for a
+  // deleted/nonexistent user doc, but a valid verified ID token already means
+  // this is a real authenticated Firebase user, so that's an acceptable gap
+  // for one night.
+  const isPremium = TEMP_PREMIUM_EMAILS.has(decoded.email);
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -375,14 +425,16 @@ Write full JUPEB-level study notes on this topic.`;
     // Real server-side enforcement of the daily cap. The Firestore rule for
     // aiTutorCounters only allows premium users to WRITE to it directly, so a
     // free user's own client-side increment silently fails (caught, logged,
-    // ignored) — that's fine, because the Admin SDK here bypasses security
-    // rules entirely and is the authoritative counter either way.
+    // ignored) — that's fine now, because the Admin SDK here bypasses
+    // security rules entirely and is the authoritative counter either way.
     const cap = isPremium ? AI_TUTOR_DAILY_CAP : AI_TUTOR_FREE_DAILY_CAP;
     const todayKey = new Date().toISOString().slice(0, 10);
+    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+    // Was: getFirestore().collection("aiTutorCounters").doc(...).get(). This
+    // in-memory Map replaces that read — approximate (per warm instance,
+    // resets on cold start) but avoids the Firestore call entirely.
     const counterKey = `${decoded.uid}_${todayKey}`;
-    const counterRef = getFirestore().collection("aiTutorCounters").doc(counterKey);
-    const counterSnap = await counterRef.get();
-    const usedToday = counterSnap.exists ? (counterSnap.data().count || 0) : 0;
+    const usedToday = TEMP_inMemoryCounters.get(counterKey) || 0;
     if (usedToday >= cap) {
       res.status(429).json({ error: "Daily AI Tutor limit reached", fallbackToStored: true });
       return;
@@ -458,7 +510,9 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
       }
     }
 
-    await counterRef.set({ count: usedToday + 1 }, { merge: true });
+    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
+    // Was: counterRef.set({ count: usedToday + 1 }, { merge: true }).
+    TEMP_inMemoryCounters.set(counterKey, usedToday + 1);
 
     res.status(200).json({ text: sanitizeLatexDelimiters(text), followUps });
 

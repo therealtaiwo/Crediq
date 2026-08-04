@@ -1072,7 +1072,16 @@ const IDB = {
         const req = db.transaction("cache","readonly").objectStore("cache").get(key);
         req.onsuccess = () => {
           const r = req.result;
-          res(r && Date.now()-r.ts < 24*60*60*1000 ? r.data : null);
+          // Bumped from 24h to 7 days — questions change rarely (new ones added
+          // occasionally, not constantly), and this cache is the single biggest
+          // lever on Firestore read volume: a full re-fetch of a subject's
+          // question bank is hundreds to low-thousands of document reads, and
+          // that was happening for every student once per day. At 460+ students,
+          // even a modest fraction re-fetching on the same day can blow through
+          // the entire 50,000/day free-tier quota on its own — which is what
+          // caused today's ~14hr outage. A student will now go up to a week
+          // between full refetches instead of one day.
+          res(r && Date.now()-r.ts < 7*24*60*60*1000 ? r.data : null);
         };
         req.onerror = () => res(null);
       });
@@ -5551,7 +5560,12 @@ const AI_TUTOR_EXCLUDED_TOPICS=["Genetics"];
 // regenerated on next open — no manual cache-wiping needed. Old cached
 // docs predating this field entirely (undefined) will also correctly
 // miss the check and regenerate.
-const AI_TUTOR_PROMPT_VERSION=3;
+// Bumped 3 -> 4: Explain mode now also returns 3-5 bundled follow-up
+// questions (Learning Engine Architecture v1, Phase 1) in the same
+// generation call. This is a real output-shape change, so every existing
+// cached explanation needs one regeneration to pick up aiTutorFollowUps —
+// exactly the case this version field exists for.
+const AI_TUTOR_PROMPT_VERSION=4;
 // Separate from AI_TUTOR_PROMPT_VERSION on purpose: Notes and Explain modes
 // have independent prompts in ai-tutor.js, so a change to one shouldn't force
 // every previously-cached instance of the OTHER to regenerate. Bumped from an
@@ -5567,23 +5581,11 @@ const aiTutorTodayKey=()=>new Date().toISOString().slice(0,10);
 // purely to show "X left today" before the student taps, so the cap is felt
 // as something they're about to use up (loss framing) rather than a surprise
 // wall after the fact.
-// Firestore reads have no built-in client-side timeout — on a dead-but-
-// still-"connected" link, or mid-outage, a getDoc() call can hang
-// indefinitely: never resolves, never rejects, so neither the try's
-// success path nor the catch ever fires. This races any promise against a
-// hard deadline so callers always get SOME outcome instead of hanging the
-// UI on "Thinking…" forever. Same pattern as the withTimeout used for
-// getDocs() elsewhere in this file.
-const withFirestoreTimeout=(promise,ms=6000)=>Promise.race([
-  promise,
-  new Promise((_,reject)=>setTimeout(()=>reject(new Error("Firestore read timed out")),ms)),
-]);
-
 async function getAiTutorRemainingToday(user){
   if(!user?.uid||user?.isPremium)return null;
   try{
     const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
-    const snap=await withFirestoreTimeout(getDoc(counterRef));
+    const snap=await getDoc(counterRef);
     const used=snap.exists()?(snap.data().count||0):0;
     return Math.max(0,AI_TUTOR_FREE_DAILY_CAP-used);
   }catch{return null;}
@@ -5595,37 +5597,25 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const cacheField=style==="beginner"?"aiTutorExplanationBeginner":"aiTutorExplanation";
   const versionField=style==="beginner"?"aiTutorPromptVersionBeginner":"aiTutorPromptVersion";
   const qRef=doc(db,"questions",questionId);
-  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-  // Was: an unguarded getDoc() — on quota exhaustion this threw uncaught,
-  // leaving the button stuck on "Thinking…" forever. Now fails open: no
-  // cache found just means we skip straight to a fresh generation, same as
-  // a normal cache miss.
-  let qData=null;
-  try{
-    const qSnap=await withFirestoreTimeout(getDoc(qRef));
-    qData=qSnap.data();
-  }catch(err){console.error("AI Tutor cache read failed (treating as cache miss):",err);}
+  const qSnap=await getDoc(qRef);
+  const qData=qSnap.data();
   const cached=qData?.[cacheField];
   const cacheIsCurrent=qData?.[versionField]===AI_TUTOR_PROMPT_VERSION;
-  if(cached&&cacheIsCurrent)return{text:cached,cached:true};
+  // aiTutorFollowUps is shared across both styles (normal/beginner) on
+  // purpose — follow-ups are about the underlying concept, not the reading
+  // level of the explanation, so whichever style generates first populates
+  // it for both. Phase 1 only: not rendered anywhere yet, just cached.
+  if(cached&&cacheIsCurrent)return{text:cached,followUps:qData?.aiTutorFollowUps||[],cached:true};
 
   // Client-side pre-check: fast, avoids an unnecessary network round-trip
   // when we already know locally the user is over their cap. This is NOT
   // the real security boundary — ai-tutor.js enforces the same cap
   // server-side against the same counter doc, since a free user has no
   // reason not to bypass a client-only check.
-  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-  // Was: an unguarded getDoc() on aiTutorCounters. On quota exhaustion this
-  // threw uncaught. Now fails open: an unknown count just skips this
-  // client-side pre-check and lets the request through — the server-side
-  // in-memory counter in ai-tutor.js is the real cap enforcement anyway.
   const cap=user?.isPremium?AI_TUTOR_DAILY_CAP:AI_TUTOR_FREE_DAILY_CAP;
-  let count=0;
-  try{
-    const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
-    const counterSnap=await withFirestoreTimeout(getDoc(counterRef));
-    count=counterSnap.exists()?(counterSnap.data().count||0):0;
-  }catch(err){console.error("AI Tutor counter read failed (skipping client-side cap check):",err);}
+  const counterRef=doc(db,"aiTutorCounters",`${user.uid}_${aiTutorTodayKey()}`);
+  const counterSnap=await getDoc(counterRef);
+  const count=counterSnap.exists()?(counterSnap.data().count||0):0;
   if(count>=cap)return{blocked:"daily-cap-reached"};
   const isLastFreeUse=!user?.isPremium&&count===AI_TUTOR_FREE_DAILY_CAP-1;
 
@@ -5649,11 +5639,13 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const data=await res.json();
   if(!data.text)return{blocked:"generation-failed"};
 
+  const followUps=Array.isArray(data.followUps)?data.followUps:[];
+
   try{
-    await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION});
+    await updateDoc(qRef,{[cacheField]:data.text,aiTutorGeneratedAt:new Date().toISOString(),[versionField]:AI_TUTOR_PROMPT_VERSION,aiTutorFollowUps:followUps});
   }catch(err){console.error("Failed to cache AI Tutor result:",err);}
 
-  return{text:data.text,cached:false};
+  return{text:data.text,followUps,cached:false};
 }
 
 // ─── TOPIC NOTES (full-topic JUPEB notes, distinct from per-question AI Tutor) ─
@@ -5667,16 +5659,8 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   const courseCode=explicitCourseCode||getCourseUnit(subject,topic)||"";
   const noteId=`${subject}_${topicSlug(topic)}`.replace(/[\/\.#\[\]]/g,"_");
   const noteRef=doc(db,"topicNotes",noteId);
-  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-  // Was: an unguarded getDoc() — on quota exhaustion this threw uncaught,
-  // leaving Notes mode stuck with no fallback state at all. Now fails open:
-  // no cache found just means we skip straight to a fresh generation, same
-  // as a normal cache miss.
-  let noteData=null;
-  try{
-    const noteSnap=await withFirestoreTimeout(getDoc(noteRef));
-    noteData=noteSnap.exists()?noteSnap.data():null;
-  }catch(err){console.error("Topic notes cache read failed (treating as cache miss):",err);}
+  const noteSnap=await getDoc(noteRef);
+  const noteData=noteSnap.exists()?noteSnap.data():null;
   const cachedContent=noteData?.content;
   const cacheIsCurrent=noteData?.aiTutorPromptVersion===TOPIC_NOTES_PROMPT_VERSION;
   if(cachedContent&&cacheIsCurrent)return{text:cachedContent,cached:true};
@@ -6063,7 +6047,7 @@ const AI_TUTOR_DELIGHT_LINES=[
   "This one trips up a lot of people on exam day.",
 ];
 
-function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
+function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T,remainingToday,setRemainingToday}){
   const[state,setState]=useState("idle");
   const[explanation,setExplanation]=useState(null);
   const[beginnerExplanation,setBeginnerExplanation]=useState(null);
@@ -6071,58 +6055,37 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T}){
   const[beginnerLoading,setBeginnerLoading]=useState(false);
   const[blockedReason,setBlockedReason]=useState(null);
   const[delightLine,setDelightLine]=useState(null);
-  const[remainingToday,setRemainingToday]=useState(null); // null = unknown/premium, else a number
-
-  useEffect(()=>{
-    let cancelled=false;
-    getAiTutorRemainingToday(user).then(r=>{if(!cancelled)setRemainingToday(r);});
-    return()=>{cancelled=true;};
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[user?.uid]);
+  // remainingToday/setRemainingToday now come from TutorScreen (fetched once
+  // per session, not once per question) — see the comment on that state in
+  // TutorScreen for why. No local fetch here anymore.
 
   if(AI_TUTOR_EXCLUDED_TOPICS.includes(question.topic))return null;
 
   const handleTap=async()=>{
     setState("loading");
-    try{
-      const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
-      if(result.text){
-        setExplanation(result.text);
-        setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
-        setState("shown");
-        if(!result.cached&&remainingToday!=null)setRemainingToday(r=>Math.max(0,(r||0)-1));
-      }
-      else if(result.blocked==="daily-cap-reached"&&!user?.isPremium){
-        // Let them feel it was actually working before revealing the wall —
-        // don't block before they've even pressed the button. A believable
-        // "thinking" pause, then the explanation is framed as ready and
-        // waiting, not denied.
-        await new Promise(r=>setTimeout(r,1400));
-        setState("paywall-tease");
-      }
-      else{setBlockedReason(result.blocked);setState("blocked");}
-    }catch(err){
-      // Defense in depth: getAiTutorExplanation should never throw (every
-      // internal await is guarded), but if something unexpected does slip
-      // through, this guarantees the button still resolves out of
-      // "Thinking…" instead of hanging forever.
-      console.error("AI Tutor unexpected failure:",err);
-      setBlockedReason("generation-failed");
-      setState("blocked");
+    const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
+    if(result.text){
+      setExplanation(result.text);
+      setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
+      setState("shown");
+      if(!result.cached&&remainingToday!=null)setRemainingToday(r=>Math.max(0,(r||0)-1));
     }
+    else if(result.blocked==="daily-cap-reached"&&!user?.isPremium){
+      // Let them feel it was actually working before revealing the wall —
+      // don't block before they've even pressed the button. A believable
+      // "thinking" pause, then the explanation is framed as ready and
+      // waiting, not denied.
+      await new Promise(r=>setTimeout(r,1400));
+      setState("paywall-tease");
+    }
+    else{setBlockedReason(result.blocked);setState("blocked");}
   };
 
   const handleSimpler=async()=>{
     if(beginnerExplanation){setViewMode("beginner");return;} // already fetched, free toggle
     setBeginnerLoading(true);
-    let result={};
-    try{
-      result=await getAiTutorExplanation({user,question,questionId,studentAnswer,style:"beginner"});
-    }catch(err){
-      console.error("AI Tutor (simpler) unexpected failure:",err);
-    }finally{
-      setBeginnerLoading(false);
-    }
+    const result=await getAiTutorExplanation({user,question,questionId,studentAnswer,style:"beginner"});
+    setBeginnerLoading(false);
     if(result.text){setBeginnerExplanation(result.text);setViewMode("beginner");}
     // silent fail — student still has the standard explanation on screen
   };
@@ -6858,6 +6821,24 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
   const[showFormulaBank,setShowFormulaBank]=useState(false);
   const qbLoaded=Object.keys(QB).length>0;
 
+  // Session-level "remaining AI Tutor uses today" — fetched ONCE per session
+  // start, not per question. AiTutorButton used to re-fetch this on every
+  // mount (which happens every time a question is revealed, since it's
+  // conditionally rendered inside {revealed && (...)}), turning a purely
+  // informational read into one of the highest-volume Firestore reads in
+  // the whole app during a busy exam period. This is not the security
+  // boundary (ai-tutor.js enforces the real cap server-side) — it's just
+  // UI, so a session-level snapshot decremented locally after each real
+  // generation is exactly as correct for the student as a fresh read every
+  // question would be, at a fraction of the reads.
+  const[remainingToday,setRemainingToday]=useState(null); // null = unknown/premium
+  useEffect(()=>{
+    let cancelled=false;
+    getAiTutorRemainingToday(user).then(r=>{if(!cancelled)setRemainingToday(r);});
+    return()=>{cancelled=true;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[user?.uid]);
+
   // Ends the session everywhere it can end (finished the last question, or
   // exited manually) — centralized so the resume snapshot always gets cleared
   // and can never resurrect a session the student actually finished.
@@ -7035,7 +7016,7 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
               </div>
             )}
 
-            <AiTutorButton user={user} question={q} questionId={q.id} studentAnswer={selectedOpt} onUpgrade={onUpgrade} T={T}/>
+            <AiTutorButton user={user} question={q} questionId={q.id} studentAnswer={selectedOpt} onUpgrade={onUpgrade} T={T} remainingToday={remainingToday} setRemainingToday={setRemainingToday}/>
             <TopicNotesButton user={user} subject={q.subject} topic={q.topic} T={T} onUpgrade={onUpgrade}/>
 
             <BtnPrimary onClick={next} T={T}>
@@ -11869,19 +11850,7 @@ export default function App() {
   };
 
   const loadHistory=async uid=>{
-    // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-    // Was: always setHistoryLoaded(false) first, showing the skeleton for up
-    // to 10s before falling back to cache. Since Firestore reads are
-    // exhausted tonight, that skeleton wait is a near-guaranteed dead end for
-    // returning users. Now: if a cache exists, render it immediately with no
-    // skeleton, and let the live fetch update silently in the background.
-    const cached=HistoryCache.get(uid);
-    if(cached&&cached.length){
-      setHistory(cached);
-      setHistoryLoaded(true);
-    }else{
-      setHistoryLoaded(false); // no cache yet (first-ever load) — skeleton as before
-    }
+    setHistoryLoaded(false);
     try{
       const q=query(collection(db,"sessions"),where("userId","==",uid),orderBy("createdAt","desc"),limit(100));
       const snap=await withTimeout(getDocs(q),10000,"Load history");
@@ -11890,17 +11859,16 @@ export default function App() {
         const bt=b.createdAt?.toDate?.()?.getTime()||new Date(b.date).getTime();
         return at-bt;
       });
-      setHistory(sessions); // silently replaces cached data if the live fetch succeeds
+      setHistory(sessions);
       HistoryCache.set(uid,sessions);
       resyncPendingSessions(uid).catch(e=>console.warn("Pending resync (background):",e)); // fire-and-forget, on purpose
     }catch(e){
       console.error("Load history — falling back to cache:",e);
+      const cached=HistoryCache.get(uid);
       if(cached&&cached.length){
+        setHistory(cached);
         show("Slow connection — showing your last saved data.","info");
       }
-      // if there was no cache at all, historyLoaded is set true in finally
-      // below and the dashboard just renders with an empty history array —
-      // same as today's existing no-cache behavior.
     }
     finally{setHistoryLoaded(true);}
   };

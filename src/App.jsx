@@ -10581,6 +10581,42 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
 }
 
 
+// ─── THEORY GRADING PERSISTENCE ────────────────────────────────────────────
+// Phase 1 of Learning_Engine_Architecture_v1.md applied to Theory (deliberately
+// scoped down from the full doc — see conversation 2026-08-05): just make sure
+// no grading result or API call is ever wasted. Concept-level caching and the
+// "Keep Learning" follow-up layer are explicitly deferred to Phase 2/3.
+//
+// One doc per question, under users/{uid}/theoryGrades/{questionId} — a
+// per-user subcollection, same convention as the existing mastery/ and
+// theoryHistory/ subcollections in firestore.rules (allow read,write if
+// request.auth.uid==uid), rather than a new top-level collection needing its
+// own rule shape. Requires adding a theoryGrades match block alongside those
+// two in firestore.rules — see chat.
+//
+// Before calling /api/grade-theory, check this doc: if promptVersion matches
+// AND the submitted answer is byte-identical to what was last graded (via
+// answerHash), reuse the stored result — no Gemini call, no credit spent.
+// Bumping THEORY_GRADING_PROMPT_VERSION (e.g. after a rubric change) makes
+// every existing cache entry stop matching, so it regenerates naturally on
+// next grade — old entries are never mutated or force-deleted, same pattern
+// as AI_TUTOR_PROMPT_VERSION above.
+const THEORY_GRADING_PROMPT_VERSION = 1;
+
+// Cheap, deterministic, non-cryptographic fingerprint — only used to detect
+// "did the student's submitted answer change since last time", not for any
+// security purpose. Covers text content and, for photo answers, the base64
+// payload itself (so a re-taken photo of the same page still gets treated as
+// a fresh answer if the bytes differ even slightly).
+function hashTheoryAnswer(text, photo) {
+  const raw = (text || "") + "|" + (photo?.base64 || "");
+  let h = 0;
+  for (let i = 0; i < raw.length; i++) {
+    h = (Math.imul(31, h) + raw.charCodeAt(i)) | 0;
+  }
+  return String(h);
+}
+
 // ─── THEORY SCREEN ────────────────────────────────────────────────────────────
 function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   const[phase,setPhase]=useState("setup");
@@ -10712,6 +10748,21 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
     const text=(answerText[qn.id]||"").trim();
     const photo=answerPhoto[qn.id];
     if(!text&&!photo)return null; // nothing attached — not an error, just skipped
+    const answerHash=hashTheoryAnswer(text,photo);
+    const gradeRef=doc(db,"users",user.uid,"theoryGrades",qn.id);
+
+    // Cache check — skip the Gemini call entirely if this exact answer was
+    // already graded under the current rubric version.
+    try{
+      const cached=await getDoc(gradeRef);
+      if(cached.exists()){
+        const c=cached.data();
+        if(c.promptVersion===THEORY_GRADING_PROMPT_VERSION&&c.answerHash===answerHash&&c.result){
+          return{...c.result,fromCache:true};
+        }
+      }
+    }catch(err){console.error("Theory grade cache read failed (non-fatal, will regenerate):",err);}
+
     try{
       const parts=(qn.subQuestions?.length?qn.subQuestions:[{part:"main",answer:qn.answer,marks:qn.totalMarks||10}])
         .map(sq=>({part:sq.part,modelAnswer:sq.answer||"",maxMarks:sq.marks||qn.totalMarks||10}));
@@ -10728,7 +10779,17 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
       const data=await res.json();
       if(res.status===403){onUpgrade&&onUpgrade("theory_locked");return{error:true};}
       if(!res.ok||data.error||data.fallbackToManual)return{error:true};
-      return data;
+
+      // Persist — best-effort, non-fatal on failure (student still sees their
+      // result this session, just won't survive a refresh if this write fails).
+      try{
+        await setDoc(gradeRef,{
+          subject,promptVersion:THEORY_GRADING_PROMPT_VERSION,answerHash,
+          result:data,gradedAt:serverTimestamp(),
+        });
+      }catch(err){console.error("Failed to persist theory grade:",err);}
+
+      return{...data,fromCache:false};
     }catch{return{error:true};}
   };
 
@@ -10819,7 +10880,10 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
       const qn=toGrade[i];
       setGradingProgress({current:i+1,total:toGrade.length});
       const data=await gradeOneQuestion(qn);
-      if(data&&!data.error){localResults[qn.id]=data;creditsUsed++;}
+      if(data&&!data.error){
+        localResults[qn.id]=data;
+        if(!data.fromCache)creditsUsed++; // cache hits are free — no Gemini call was made
+      }
       else{localErrors[qn.id]=true;}
     }
     setGradedResults(localResults);
@@ -12322,353 +12386,4 @@ export default function App() {
         const hasAllSubs=subs.every(s=>subjectAvgMap[s]);
         const noFails=hasAllSubs&&!subs.some(s=>{const d=subjectAvgMap[s];return!d||jupebGrade(Math.round(d.total/d.count)).grade==="F";});
         if(noFails)estPts+=1;
-        await updateDoc(doc(db,"users",user.uid),{
-          weakTopics:allWeak,
-          gradeHistory:newGradeHistory,
-          averageGrade:avgGrade,
-          totalSessionsCompleted:increment(1),
-          studyPattern:timeOfDay,
-          consistencyScore:Math.min(100,Math.round((newStreak/30)*100)),
-          lastSessionDate:new Date().toISOString().split("T")[0],
-          strongTopics:strongFromSession,
-        });
-        // currentPoints is separate — rules are stricter on the main update
-        updateDoc(doc(db,"users",user.uid),{currentPoints:estPts}).catch(()=>{});
-        setUser(u=>({...u,weakTopics:allWeak,gradeHistory:newGradeHistory,averageGrade:avgGrade}));
-
-        // 7. Mastery subcollection (non-blocking)
-        if(qResults.length){
-          updateMastery(user.uid,qResults).catch(e=>console.warn("Mastery update:",e));
-        }
-
-        // 8. Engagement collection (non-blocking)
-        updateEngagement(user.uid,{timeOfDay,dayOfWeek,streakCount:newStreak}).catch(e=>console.warn("Engagement update:",e));
-
-        // 9. Readiness collection (non-blocking)
-        updateReadiness(user.uid,newHist,user.subjects||[]).catch(e=>console.warn("Readiness update:",e));
-
-        // 10. First session email disabled — re-enable after domain setup
-
-      }catch(e){
-        console.error("Save session:",e);
-        // Fix 3c: backup already in localStorage — tell user clearly, don't panic them
-        show("Your result is saved. We'll sync it when your connection is back.","info");
-      }
-    }
-  };
-
-  const handleStartExam=async cfg=>{
-    // No daily limit gate — free users can always do a full diagnostic (mock exam)
-    // The only premium gate is drills (handled in DrillScreen/handleNav)
-    if(!Object.keys(QB).length&&user?.subjects){
-      await loadQuestions(user.subjects);
-    }
-    setExamInitial(null); // starting fresh — don't carry over a previous resume position
-    setExamConfig(cfg);setScreen("exam");
-  };
-
-  // applyResumeCandidate is the single place that actually re-enters a saved
-  // session — used both for the silent auto-resume path (quick app-switch,
-  // background reload) and the manual banner tap (older session, user's choice).
-  const applyResumeCandidate=candidate=>{
-    const{questions,subject,year,mode,timeLimit,startTime,current,answers}=candidate;
-    if(mode==="tutor"){
-      setTutorResume({questions,subject,idx:current,selectedOpt:candidate.selectedOpt,revealed:candidate.revealed});
-      setScreen("tutor");
-    }else if(mode==="drill"){
-      // Route through DrillScreen itself so drill_completed tracking and the
-      // mode:"Drill" result tag still happen the same way a normal drill does —
-      // duplicating that logic here would drift out of sync over time.
-      setDrillResume({questions,subject,current,answers,startTime});
-      setScreen("drill");
-    }else{
-      setExamInitial({current:current||0,answers:answers||{}});
-      setExamConfig({questions,subject,year,mode,timeLimit,startTime});
-      setScreen("exam");
-    }
-    setResumeCandidate(null);
-  };
-
-  // Detect an interrupted session left over from before the app was last closed —
-  // most commonly the phone reclaiming memory from a backgrounded tab (switching
-  // to WhatsApp and back), which silently reloads the page. Only needs QB loaded
-  // (to rebuild the actual question objects from stored ids) and a matching user.
-  // autoResumeAttemptedRef ensures this only ever fires once per app load, so it
-  // can't repeatedly yank the student back to an old session while they're
-  // deliberately browsing the dashboard after a real resume/discard.
-  const autoResumeAttemptedRef=useRef(false);
-  useEffect(()=>{
-    if(!user?.uid||!Object.keys(QB).length||autoResumeAttemptedRef.current)return;
-    const snap=loadResumeSnapshot();
-    if(!snap||snap.uid!==user.uid)return;
-    const age=Date.now()-(snap.savedAt||0);
-    if(age>RESUME_SESSION_MAX_AGE_MS){clearResumeSnapshot();return;}
-    const qs=findQuestionsByIds(QB,snap.questionIds||[]);
-    if(!qs.length){clearResumeSnapshot();return;}
-    autoResumeAttemptedRef.current=true;
-    const candidate={...snap,questions:qs};
-    if(age<=RESUME_AUTO_THRESHOLD_MS){
-      // Recent enough this was almost certainly just a quick app-switch —
-      // go straight back in, no banner, no extra tap.
-      applyResumeCandidate(candidate);
-    }else{
-      // Old enough the student may have moved on deliberately — ask first.
-      setResumeCandidate(candidate);
-    }
-  },[user?.uid,QB]);
-
-  const handleResumeSession=()=>{
-    if(!resumeCandidate)return;
-    applyResumeCandidate(resumeCandidate);
-  };
-  const handleDiscardSession=()=>{
-    clearResumeSnapshot();
-    setResumeCandidate(null);
-  };
-
-  // ── Layer 1: API verifies Paystack ref (secret key stays safe server-side)
-  //            then client writes to Firestore (already authenticated) ─────────
-  const verifyAndActivatePremium=async(reference)=>{
-    if(!reference||reference==="unknown"||reference==="null"){
-      return{success:false,error:"no-ref"};
-    }
-    let paymentVerified=false;
-
-    // Try server-side Paystack verification first
-    try{
-      const res=await fetch("/api/verify-payment",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({reference})
-      });
-      const data=await res.json();
-      if(data.success)paymentVerified=true;
-    }catch(e){
-      console.warn("API verify failed — falling back to direct write:",e);
-      // If our API is down, trust the reference and write directly
-      // (Paystack already confirmed payment via their popup callback)
-      paymentVerified=true;
-    }
-
-    if(!paymentVerified)return{success:false,error:"payment-not-confirmed"};
-
-    // Write premium to Firestore — setDoc+merge works even if doc has issues
-    try{
-    // Every purchase gets AT LEAST 30 days, even this close to the exam —
-    // previously everyone shared the same hardcoded Aug 3 expiry regardless
-    // of purchase date, so someone paying in the final days got almost no
-    // access, and the entire premium cohort was set to expire simultaneously
-    // on the same day instead of on individual rolling windows.
-    const MIN_PREMIUM_DAYS=30;
-    const minExpiry=new Date(Date.now()+MIN_PREMIUM_DAYS*24*60*60*1000);
-    const examDate=new Date("2026-08-03");
-    const expiry=(examDate>minExpiry?examDate:minExpiry).toISOString();
-      await setDoc(doc(db,"users",user.uid),{
-        isPremium:true,
-        premiumExpiry:expiry,
-        paystackRef:reference,
-        paidAt:Date.now()
-      },{merge:true});
-      return{success:true};
-    }catch(e){
-      console.error("Firestore write failed:",e);
-      return{success:false,error:"firestore-failed"};
-    }
-  };
-
-  // ── Layer 3: manual verify from Profile screen ─────────────────────────────
-  const handleManualVerify=async(reference)=>{
-    if(!reference||reference==="unknown"){
-      show("No payment reference found. Contact support on WhatsApp.","error");
-      return;
-    }
-    show("Verifying payment…","info");
-    const result=await verifyAndActivatePremium(reference);
-    if(result.success){
-      try{
-        const freshSnap=await getDoc(doc(db,"users",user.uid));
-        const freshUser=freshSnap.exists()?{uid:user.uid,...freshSnap.data()}:{...user,isPremium:true};
-        setUser(freshUser);UserCache.set(freshUser);
-      }catch{setUser(u=>({...u,isPremium:true}));}
-      localStorage.removeItem("cq_pending_ref");
-      show("🎉 Premium activated! Full access unlocked.","success");
-    }else if(result.error==="payment-not-confirmed"){
-      show("Payment couldn't be confirmed with Paystack. Send your receipt to support on WhatsApp.","error");
-    }else{
-      show("Activation failed. Send this ref to support: "+reference,"error");
-    }
-  };
-
-  const handleUpgradeToPremium=async()=>{
-    if(!user)return;
-    if(!window.PaystackPop){
-      show("Loading payment…","info");
-      let ms=0;
-      await new Promise(res=>{const t=setInterval(()=>{ms+=200;if(window.PaystackPop||ms>=5000){clearInterval(t);res();}},200);});
-      if(!window.PaystackPop){show("Payment could not load. Check your internet and try again.","error");return;}
-    }
-    const key=import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
-    if(!key){show("Payment not configured. Contact support.","error");return;}
-    // Generate ref BEFORE popup opens — if user switches to PalmPay/bank app,
-    // the browser loses the onSuccess callback. Saving ref now means we can
-    // always restore premium from Profile screen.
-    const ref=`crediq_${user.uid}_${Date.now()}`;
-    localStorage.setItem("cq_pending_ref",ref);
-    const handler=window.PaystackPop.setup({
-      key,
-      email:user.email,
-      amount:250000,
-      currency:"NGN",
-      ref,
-      channels:["bank_transfer"],
-      // uid in both places so webhook can always find it
-      metadata:{uid:user.uid,custom_fields:[{display_name:"UID",variable_name:"uid",value:user.uid}]},
-      onSuccess:async(transaction)=>{
-        show("Payment confirmed! Activating your access…","info");
-        const result=await verifyAndActivatePremium(transaction.reference);
-        if(result.success){
-          // ── AMBASSADOR COMMISSION (first-touch, one-time only) ──
-          if(user.referredBy && !user.referralCredited){
-            try{
-              // Update legacy referrals doc
-              const refSnap=await getDoc(doc(db,"referrals",user.referredBy));
-              if(refSnap.exists()){
-                const existing=refSnap.data().signupsList||[];
-                const updated=existing.map(s=>s.uid===user.uid?{...s,isPaid:true,paidAt:new Date().toISOString()}:s);
-                await updateDoc(doc(db,"referrals",user.referredBy),{conversions:increment(1),earnings:increment(AMBASSADOR_COMMISSION),signupsList:updated});
-              }
-              // Update ambassadors collection
-              await setDoc(doc(db,"ambassadors",user.referredBy.toUpperCase()),{
-                code:user.referredBy.toUpperCase(),
-                premiumReferrals:increment(1),
-                earnings:increment(AMBASSADOR_COMMISSION),
-                lastConversion:new Date().toISOString(),
-              },{merge:true});
-              // Mark user as credited — prevents double commission even if payment fires twice
-              await updateDoc(doc(db,"users",user.uid),{referralCredited:true});
-            }catch(e){console.error("Ambassador commission error:",e);}
-          }
-          try{
-            const freshSnap=await getDoc(doc(db,"users",user.uid));
-            const freshUser=freshSnap.exists()?{uid:user.uid,...freshSnap.data()}:{...user,isPremium:true};
-            setUser(freshUser);UserCache.set(freshUser);
-          }catch{setUser(u=>({...u,isPremium:true}));}
-          setShowPremiumGate(false);
-          show("🎉 Welcome to CrediQ Premium! Full access unlocked.","success");
-        }else{
-          // Store ref so user can retry from Profile screen
-          localStorage.setItem("cq_pending_ref",transaction.reference);
-          show(`Payment received but activation hit a snag. Go to Profile → tap "Verify Payment". Ref: ${transaction.reference}`,"error");
-        }
-      },
-      onCancel:()=>{}
-    });
-    handler.openIframe();
-  };
-
-  const handleLogout=async()=>{
-    try{await signOut(auth);}catch{}
-    Session.clear();UserCache.clear();setUser(null);setHistory([]);setQB({});setScreen("auth");
-  };
-
-  const handleNav=s=>{
-    // AI Tutor and Drill are both free to enter — their own internal logic
-    // (weekly cap for Drill, per-tap check for AI Tutor) gates the actual action
-    if(s==="editprofile"){setScreen("editprofile");return;}
-    if(s==="drill")setDrillResume(null); // deliberate fresh start — don't let a leftover resume leak in
-    if(s==="tutor")setTutorResume(null);
-    // Lazy load questions when Practice or Drill is tapped
-    if((s==="setup"||s==="drill"||s==="tutor")&&!Object.keys(QB).length&&user?.subjects){
-      loadQuestions(user.subjects);
-    }
-    setScreen(s);
-  };
-
-  const css=useMemo(()=>buildCSS(T),[dark]); // only recompute when dark/light switches
-  // Sidebar shows on all authenticated screens except exam (focused) and public screens
-  const showSidebar=!!user&&!["landing","auth","onboard","loading","exam"].includes(screen);
-  const isMain=["dashboard","analytics","drill","profile"].includes(screen);
-  const navChange=s=>{if(s==="setup")handleNav("setup");else handleNav(s);};
-
-  if(screen==="loading")return <><style>{css}</style><LoadingScreen/></>;
-
-  return (
-    <>
-      <style>{css}</style>
-      <OfflineBanner/>
-      <ToastContainer toasts={toasts}/>
-      {user&&isMain&&<PWABanner T={T}/>}
-      <div id="paystack-container" style={{position:"fixed",zIndex:99999,top:0,left:0,width:"100%",height:"100%",pointerEvents:"none"}}/>
-
-      {showPremiumGate&&user&&<PremiumGate user={user} reason={showPremiumGate} onClose={()=>setShowPremiumGate(false)} onGoToWhyPremium={()=>{setShowPremiumGate(false);setScreen("whypremium");}} onUpgrade={handleUpgradeToPremium} onRestore={()=>handleManualVerify(localStorage.getItem("cq_pending_ref"))} T={T}/>}
-
-      {/* ── ONBOARD COMPLETE TRANSITION ── */}
-      {onboardComplete&&(
-        <div style={{position:"fixed",inset:0,background:"#040D07",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:20}}>
-          <Logo size={32} onDark={true}/>
-          <div style={{textAlign:"center"}}>
-            <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:900,color:"#F7F3EC",marginBottom:8}}>Your mission is set.</div>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"rgba(184,151,62,0.7)",letterSpacing:"0.2em"}}>TIME TO GET TO WORK.</div>
-          </div>
-        </div>
-      )}
-      {showSessionMismatch&&<SessionMismatchModal onContinue={()=>{
-        const token=Session.generate();
-        if(user?.uid)updateDoc(doc(db,"users",user.uid),{activeSession:token}).catch(()=>{});
-        setShowSessionMismatch(false);
-      }} onLogout={handleLogout} T={T}/>}
-
-      {/* Desktop sidebar — all authenticated non-exam screens */}
-      {showSidebar&&<SideNav active={screen} onChange={navChange} user={user} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onLogout={handleLogout} onProfile={()=>setScreen("profile")}/>}
-
-      {/* Main content — always fills available width */}
-      <div className={showSidebar?"cq-main":""} style={{flex:1,width:"100%",minWidth:0}}>
-        <div className="cq-content-wrap" style={{background:T.bg,minHeight:"100dvh"}}>
-
-          {screen==="landing"&&<LandingScreen onGetStarted={()=>setScreen("auth")} onLogin={()=>setScreen("auth")} T={T}/>}
-          {screen==="auth"&&<AuthScreen onAuth={handleAuth} dark={dark} setDark={setDark} T={T} hideTheme={showSidebar}/>}
-          {screen==="onboard"&&user&&<OnboardScreen user={user} onDone={handleOnboard} dark={dark} setDark={setDark} T={T} hideTheme={showSidebar}/>}
-          {screen==="postonboard"&&user&&<PostOnboardingHookScreen user={user} T={T}
-            onStart={()=>{if(user.subjects)loadQuestions(user.subjects);setScreen("setup");}}
-            onLater={()=>setScreen("dashboard")}/>}
-          {screen==="apply-ambassador"&&user&&<AmbassadorApplicationScreen user={user} T={T} onBack={()=>setScreen("profile")} showToast={show}/>}
-          {screen==="intelligence"&&user&&<IntelligenceScreen user={user} history={history} T={T} onBack={()=>setScreen("dashboard")} onNav={handleNav} onUpgrade={()=>setShowPremiumGate(true)}/>}
-
-          {screen==="dashboard"&&user&&(
-            !historyLoaded?<DashboardSkeleton T={T}/>:
-            <DashboardScreen user={user} history={history} historyLoaded={historyLoaded} QB={QB} onNav={handleNav} onLogout={handleLogout} dark={dark} setDark={setDark} T={T} showToast={show} streak={streak} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}} resumeSession={resumeCandidate} onResumeSession={handleResumeSession} onDiscardSession={handleDiscardSession}/>
-          )}
-
-          {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
-          {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
-          {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
-          {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)} resumeSession={drillResume} onResumeConsumed={()=>setDrillResume(null)}/>}
-          {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)} resumeSession={tutorResume} onResumeConsumed={()=>setTutorResume(null)}/>}
-          {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
-          {screen==="notes"&&user&&<SyllabusScreen user={user} onBack={()=>setScreen("dashboard")} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
-          {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T} initialCurrent={examInitial?.current||0} initialAnswers={examInitial?.answers||{}}/>}
-          {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
-          {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
-          {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
-          {screen==="ambassador"&&user&&<AmbassadorScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
-          {/* WhyPremium: redirect premium users to dashboard */}
-          {screen==="whypremium"&&(user?.isPremium
-            ?<div style={{padding:40,textAlign:"center",color:T.muted,fontFamily:"'DM Mono',monospace",fontSize:12}}>
-               <div style={{fontSize:28,marginBottom:12}}>✦</div>
-               <div style={{color:T.gold,marginBottom:8}}>YOU ALREADY HAVE PREMIUM</div>
-               <div style={{marginBottom:20}}>Full access is active until after the August 14 exam.</div>
-               <button onClick={()=>setScreen("dashboard")} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 20px",color:T.text,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10}}>← Back to Dashboard</button>
-             </div>
-            :<WhyPremiumScreen user={user} onBack={()=>setScreen("profile")} onUpgrade={()=>setShowPremiumGate(true)} T={T}/>
-          )}
-          {screen==="profile"&&user&&<ProfileScreen user={user} streak={streak} onBack={()=>setScreen("dashboard")} onLogout={handleLogout} onNav={handleNav} dark={dark} setDark={setDark} T={T} showToast={show} onVerifyPayment={handleManualVerify}/>}
-          {screen==="editprofile"&&user&&<EditProfileScreen user={user} onBack={()=>setScreen("profile")} onSave={updated=>{setUser(updated);UserCache.set(updated);setScreen("profile");}} dark={dark} setDark={setDark} T={T} showToast={show}/>}
-          {screen==="founder"&&user&&isFounder(user)&&<FounderDashboardScreen onBack={()=>setScreen("profile")} T={T} showToast={show}/>}
-
-        </div>
-      </div>
-
-      {isMain&&<BottomNav active={screen} onChange={navChange} T={T}/>}
-    </>
-  );
-}
+        await updateDoc(doc(db,"users",user.uid),{                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            

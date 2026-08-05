@@ -5,10 +5,23 @@
 // browser-facing frontend code. This function is the only place that key
 // ever touches.
 //
-// This function does NOT read or write Firestore. Credit checking/decrementing
-// stays in the existing client-side Firestore code, under the existing rules —
-// this keeps the function stateless and avoids introducing a second secret
-// (a Firebase Admin service account) for a single feature.
+// Auth: verifies the Firebase Auth ID token (same pattern as ai-tutor.js) and
+// requires isPremium===true on the user's Firestore doc. This endpoint calls
+// a paid Gemini API per request, so — unlike ai-tutor.js's Notes/Explain
+// split — there is no free tier here at all; Theory grading is premium-only.
+//
+// FIREBASE_ADMIN_KEY env var (full service account JSON, single-line string,
+// no VITE_ prefix) must be set — same credential ai-tutor.js already uses.
+
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
+
+if (!getApps().length) {
+  initializeApp({
+    credential: cert(JSON.parse(process.env.FIREBASE_ADMIN_KEY)),
+  });
+}
 
 const MODEL = "gemini-3.1-flash-lite"; // confirmed non-preview string — the
 // "-preview" variant is discontinued July 9 2026, do not use it.
@@ -80,6 +93,40 @@ Return ONLY this JSON structure, nothing else:
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  let decoded;
+  try {
+    decoded = await getAuth().verifyIdToken(token);
+  } catch (err) {
+    res.status(401).json({ error: "Invalid or expired session" });
+    return;
+  }
+
+  let userDoc;
+  try {
+    userDoc = await getFirestore().collection("users").doc(decoded.uid).get();
+  } catch (err) {
+    console.error("Firestore read error:", err);
+    res.status(500).json({ error: "Could not verify premium status" });
+    return;
+  }
+
+  if (!userDoc.exists) {
+    res.status(403).json({ error: "Account not found" });
+    return;
+  }
+  const isPremium = userDoc.data()?.isPremium === true;
+  if (!isPremium) {
+    res.status(403).json({ error: "Premium required for Theory grading" });
     return;
   }
 

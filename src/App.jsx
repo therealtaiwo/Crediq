@@ -4935,7 +4935,7 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
 }
 
 // ─── SETUP SCREEN (lazy loads questions) ─────────────────────────────────────
-function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory}) {
+function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory,onUpgrade}) {
   const userSubjects=user.subjects||[];
   const [subject,setSubject]=useState(()=>userSubjects[0]||"mixed");
   const [courseUnit,setCourseUnit]=useState(null); // null = all units
@@ -5123,17 +5123,17 @@ function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory
           ))}
         </div>
 
-        {/* Theory Questions — locked for all students until fully tested. Founder accounts
-            (isFounder check, same helper used for Founder Dashboard access) get the real
-            button so testing happens live in production without opening this to anyone else. */}
-        {isFounder(user)?(
+        {/* Theory Questions — premium-only launch. Founders still get in via
+            isFounder (dev/testing convenience), everyone else needs isPremium.
+            Free users get a live, clickable card that opens the upgrade flow
+            instead of a dead "COMING SOON" button. */}
+        {(user?.isPremium||isFounder(user))?(
           <button className="btn-press" onClick={onTheory}
             style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.gold}50`,borderRadius:9,cursor:"pointer",textAlign:"left"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
                 <div style={{fontSize:14,color:T.text,fontWeight:500,display:"flex",alignItems:"center",gap:8}}>
                   <BookOpen size={15} color={T.gold}/>Theory Questions
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.08em",padding:"2px 7px",borderRadius:20,background:"rgba(96,165,250,0.15)",color:"#60a5fa"}}>FOUNDER TEST</span>
                 </div>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Essay · Short Answer · Structured · AI Grading</div>
               </div>
@@ -5141,16 +5141,17 @@ function SetupScreen({user,QB,onStart,onBack,onRetryLoad,dark,setDark,T,onTheory
             </div>
           </button>
         ):(
-          <button className="btn-press" onClick={()=>{}} disabled
-            style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"not-allowed",textAlign:"left",opacity:0.55}}>
+          <button className="btn-press" onClick={()=>onUpgrade&&onUpgrade("theory_locked")}
+            style={{width:"100%",marginBottom:24,padding:"13px 15px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:9,cursor:"pointer",textAlign:"left"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
                 <div style={{fontSize:14,color:T.text,fontWeight:500,display:"flex",alignItems:"center",gap:8}}>
                   <BookOpen size={15} color={T.muted}/>Theory Questions
-                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.08em",padding:"2px 7px",borderRadius:20,background:`${T.gold}18`,color:T.gold}}>COMING SOON</span>
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.08em",padding:"2px 7px",borderRadius:20,background:`${T.gold}18`,color:T.gold}}>PREMIUM</span>
                 </div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Essay · Short Answer · Structured</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:3}}>Essay · Short Answer · Structured · AI Grading</div>
               </div>
+              <ChevronRight size={16} color={T.gold}/>
             </div>
           </button>
         )}
@@ -10581,7 +10582,7 @@ function EditProfileScreen({user,onBack,onSave,dark,setDark,T,showToast}){
 
 
 // ─── THEORY SCREEN ────────────────────────────────────────────────────────────
-function TheoryScreen({user,onEnd,onBack,T}){
+function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   const[phase,setPhase]=useState("setup");
   const[subject,setSubject]=useState(user.subjects?.[0]||"");
   const[year,setYear]=useState("all");
@@ -10715,8 +10716,9 @@ function TheoryScreen({user,onEnd,onBack,T}){
       const parts=(qn.subQuestions?.length?qn.subQuestions:[{part:"main",answer:qn.answer,marks:qn.totalMarks||10}])
         .map(sq=>({part:sq.part,modelAnswer:sq.answer||"",maxMarks:sq.marks||qn.totalMarks||10}));
       const questionType=qn.has_diagram?"diagram":(["Physics","Chemistry","Mathematics"].includes(subject)?"numeric":"conceptual");
+      const token=await auth.currentUser.getIdToken();
       const res=await fetch("/api/grade-theory",{
-        method:"POST",headers:{"Content-Type":"application/json"},
+        method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
         body:JSON.stringify({
           subject,topic:qn.topic||"",questionType,parts,
           studentAnswerText:text||undefined,
@@ -10724,6 +10726,7 @@ function TheoryScreen({user,onEnd,onBack,T}){
         })
       });
       const data=await res.json();
+      if(res.status===403){onUpgrade&&onUpgrade("theory_locked");return{error:true};}
       if(!res.ok||data.error||data.fallbackToManual)return{error:true};
       return data;
     }catch{return{error:true};}
@@ -10735,8 +10738,9 @@ function TheoryScreen({user,onEnd,onBack,T}){
     if(!graded)return;
     setFollowUpLoading(true);
     try{
+      const token=await auth.currentUser.getIdToken();
       const res=await fetch("/api/grade-theory",{
-        method:"POST",headers:{"Content-Type":"application/json"},
+        method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
         body:JSON.stringify({
           subject,topic:qn.topic||"",parts:[{part:"main",modelAnswer:"",maxMarks:1}],
           studentAnswerText:"(follow-up clarification request)",
@@ -12637,14 +12641,14 @@ export default function App() {
 
           {screen==="analytics"&&user&&<AnalyticsScreen user={user} history={history} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onNav={handleNav}/>}
           {screen==="mistakes"&&user&&<MistakesScreen history={history} user={user} T={T} dark={dark} setDark={setDark} onDrill={()=>setScreen("drill")} onBack={()=>setScreen("analytics")}/>}
-          {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")}/>}
+          {screen==="setup"&&user&&<SetupScreen user={user} QB={QB} onStart={handleStartExam} onBack={()=>setScreen("dashboard")} onRetryLoad={()=>loadQuestions(user.subjects)} dark={dark} setDark={setDark} T={T} onTheory={()=>setScreen("theory")} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="drill"&&user&&<DrillScreen user={user} history={history} QB={QB} onEnd={handleExamEnd} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} showToast={show} onUpgrade={()=>setShowPremiumGate(true)} resumeSession={drillResume} onResumeConsumed={()=>setDrillResume(null)}/>}
           {screen==="tutor"&&user&&<TutorScreen user={user} QB={QB} onBack={()=>setScreen("dashboard")} dark={dark} setDark={setDark} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)} resumeSession={tutorResume} onResumeConsumed={()=>setTutorResume(null)}/>}
           {screen==="formulabank"&&user&&<ReferenceBankScreen user={user} onBack={()=>setScreen("tutor")} dark={dark} setDark={setDark} T={T}/>}
           {screen==="notes"&&user&&<SyllabusScreen user={user} onBack={()=>setScreen("dashboard")} T={T} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="exam"&&examConfig&&user&&<ExamScreen config={examConfig} user={user} onEnd={handleExamEnd} onQuit={()=>setScreen("dashboard")} onLimitHit={async partialResult=>{if(partialResult){await handleExamEnd(partialResult);}else{setScreen("dashboard");}}} dark={dark} setDark={setDark} T={T} initialCurrent={examInitial?.current||0} initialAnswers={examInitial?.answers||{}}/>}
           {screen==="results"&&examResult&&<ResultsScreen result={examResult} user={user} history={history} onHome={()=>setScreen("dashboard")} onRetry={()=>setScreen("setup")} onDrill={()=>setScreen("drill")} dark={dark} setDark={setDark} T={T} onUpgrade={()=>setShowPremiumGate(true)} onUpdateUser={updated=>{setUser(updated);UserCache.set(updated);}}/>}
-          {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")}/>}
+          {screen==="theory"&&user&&<TheoryScreen user={user} T={T} onEnd={handleTheoryEnd} onBack={()=>setScreen("setup")} onUpgrade={reason=>setShowPremiumGate(reason||true)}/>}
           {screen==="timetable"&&user&&<TimetableScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {screen==="ambassador"&&user&&<AmbassadorScreen user={user} onBack={()=>setScreen("profile")} T={T}/>}
           {/* WhyPremium: redirect premium users to dashboard */}

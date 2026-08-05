@@ -6051,6 +6051,23 @@ function AiTutorFormattedText({text,T,collapsible=false}){
   return(
     <div style={{fontSize:13,color:T.text}}>
       <ListenButton text={normalizedText} T={T}/>
+      {/* Phase 2 fix: follow-up answers deliberately have NO **Header** lines
+          (FOLLOWUP_SYSTEM_PROMPT explicitly forbids them, since a follow-up
+          is one focused answer, not a multi-section breakdown). The section
+          parser above only pushes into `sections` when it hits a header, so
+          header-less text used to render nothing at all here except the
+          Listen button — this is the plain-text fallback for exactly that
+          case. Explain/Notes mode always produce headers, so this branch
+          never fires for them; nothing about their rendering changes. */}
+      {sections.length===0&&lines.length>0&&(
+        <div>
+          {lines.map((line,i)=>(
+            <div key={i} style={{lineHeight:1.55,marginBottom:6}}>
+              {renderMathText(line,T)}
+            </div>
+          ))}
+        </div>
+      )}
       {sections.map((sec,idx)=>{
         const isOpen=!collapsible||openSet.has(idx);
         return(

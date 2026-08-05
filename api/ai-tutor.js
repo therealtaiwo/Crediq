@@ -219,6 +219,34 @@ Then, on the line(s) after that, output ONLY a JSON array of exactly 4 objects �
 - "type": exactly one of "understand", "memorize", "mistake", "practice", "related"
 Cover a genuine mix of types and difficulties across the 4 — don't make them all the same type or all the same difficulty.`;
 
+// Phase 2 of the follow-up learning system (Learning Engine Architecture v1).
+// Used when a student taps one of the follow-up questions bundled with an
+// explanation (Phase 1). Deliberately a separate, shorter prompt from
+// SYSTEM_PROMPT — this answers ONE focused question the student chose,
+// building on the explanation they already read, not a full multi-section
+// breakdown of the original MCQ from scratch.
+const FOLLOWUP_SYSTEM_PROMPT = `You are the same patient JUPEB tutor, continuing a conversation with a student. They just read an explanation for a question, and they tapped one follow-up they were genuinely curious about. Answer ONLY that follow-up — this is a focused, single-topic answer, not a full multi-section explanation.
+
+You'll be given the ORIGINAL question and the explanation the student already read, so you can build on what they already know instead of repeating it. You'll also be told the TYPE of this follow-up — calibrate your answer to it:
+- "understand": explain the underlying concept clearly, with real reasoning — not just a definition.
+- "memorize": give a genuinely useful mnemonic, pattern, or memory trick they could actually recall in an exam — not vague advice like "practice more".
+- "mistake": name the specific, common wrong turn students take here, and why it happens.
+- "practice": pose 2-3 short practice questions on this exact idea, from genuinely different angles, WITH the full worked answer immediately below each one — this is standalone reading material, not a live quiz, so withholding answers only wastes their time.
+- "related": clearly explain how the two ideas relate or differ, with a concrete example that distinguishes them.
+
+MATH NOTATION — rendered with real LaTeX on the client, so use it for every piece of math, however small:
+- Wrap any standalone formula in $$...$$
+- Wrap inline math (a variable, a value, a short expression) in $...$
+- NEVER use \\[...\\] or \\(...\\) — only $$...$$ and $...$. This is the one rule that breaks rendering completely if not followed.
+- Fractions: \\frac{a}{b}, never "a/b". Powers: x^{2} (braces for anything longer than one character). Subscripts: n_{f}. Square roots: \\sqrt{x}.
+- Greek letters and symbols: \\theta \\lambda \\pi \\mu \\omega \\Delta \\times \\div \\pm \\approx \\leq \\geq \\neq — never spelled out.
+
+Rules:
+- Simple English, conversational, second person — same warm tutor voice as before, never clinical or textbook.
+- Length proportional to the question — most answers 100-250 words; "practice" type can run longer to fit the worked problems.
+- Do NOT repeat the original explanation the student already read — build on it, don't restate it.
+- Do NOT use markdown headers like **Concept** — this is one focused answer, not a structured multi-section breakdown.`;
+
 const NOTES_SYSTEM_PROMPT = `You are writing a full study chapter on one topic for a JUPEB student — not a quick summary, not a cheat sheet. Write like the best tutor they've ever had is sitting with them and has all the time in the world to make sure they truly get it.
 
 CRITICAL CONTEXT — read this before writing a single word: JUPEB is an A-Level equivalent (UK A-Level / first-year university foundation), NOT JAMB. JAMB rewards surface pattern-recognition on multiple-choice trivia. JUPEB expects real conceptual mastery — a student who can derive, explain, and apply, not just recall. If your instinct is to write a JAMB-style quick summary, override it. Go deeper than feels necessary. Assume the student wants everything they'd need so they never have to look this topic up anywhere else — this note should function as a complete replacement for their textbook chapter, not a supplement to it.
@@ -399,6 +427,78 @@ Write full JUPEB-level study notes on this topic.`;
       }
 
       res.status(200).json({ text: sanitizeLatexDelimiters(notesText) });
+      return;
+    }
+
+    // ── FOLLOWUP MODE — Phase 2 of the follow-up learning system. Answers
+    // ONE follow-up question a student tapped after reading an explanation.
+    // Shares the SAME daily cap/counter as Explain mode on purpose — this is
+    // still an AI generation and should count against the same budget, not
+    // a separate uncapped surface. Not premium-gated on its own (matches
+    // Explain mode) — the cap below is the real gate for free users.
+    if (body.mode === "followup") {
+      const {
+        subject, topic, originalQuestion, groundingExplanation,
+        followUpQuestion, difficulty: followUpDifficulty, type: followUpType,
+      } = body;
+
+      if (!subject || !followUpQuestion) {
+        res.status(400).json({ error: "Missing required fields: subject, followUpQuestion" });
+        return;
+      }
+      const VALID_FOLLOWUP_TYPES = new Set(["understand", "memorize", "mistake", "practice", "related"]);
+      const safeType = VALID_FOLLOWUP_TYPES.has(followUpType) ? followUpType : "understand";
+
+      // Same cap logic as Explain mode, duplicated rather than shared — this
+      // mode is deliberately kept self-contained so it can be removed or
+      // changed without touching Explain mode's working code.
+      const followupCap = isPremium ? AI_TUTOR_DAILY_CAP : AI_TUTOR_FREE_DAILY_CAP;
+      const followupTodayKey = new Date().toISOString().slice(0, 10);
+      const followupCounterKey = `${decoded.uid}_${followupTodayKey}`;
+      const followupUsedToday = TEMP_inMemoryCounters.get(followupCounterKey) || 0;
+      if (followupUsedToday >= followupCap) {
+        res.status(429).json({ error: "Daily AI Tutor limit reached", fallbackToStored: true });
+        return;
+      }
+
+      const followupUserPrompt = `Subject: ${subject}
+Topic: ${topic || "N/A"}
+Original question: ${originalQuestion || "N/A"}
+Explanation the student already read: ${groundingExplanation || "N/A"}
+Follow-up type: ${safeType}
+
+The student tapped this follow-up question — answer it directly: ${followUpQuestion}`;
+
+      const { res: followupRes, usedFallback: followupUsedFallback } = await callGroqWithFallback({
+        apiKey,
+        systemPrompt: FOLLOWUP_SYSTEM_PROMPT,
+        userPrompt: followupUserPrompt,
+        maxTokens: 900,
+        allowFallback: true,
+      });
+
+      if (!followupRes.ok) {
+        const errText = await followupRes.text().catch(() => "");
+        console.error("Groq API error (followup):", followupRes.status, errText);
+        res.status(followupRes.status === 429 ? 429 : 502).json({
+          error: "AI Tutor unavailable right now",
+          fallbackToStored: true,
+        });
+        return;
+      }
+
+      const followupData = await followupRes.json();
+      const answerText = followupData?.choices?.[0]?.message?.content;
+      if (followupUsedFallback) console.warn(`Followup served by fallback model (${FALLBACK_MODEL}) for ${subject} / ${topic || "N/A"}`);
+
+      if (!answerText) {
+        res.status(502).json({ error: "Empty AI response", fallbackToStored: true });
+        return;
+      }
+
+      TEMP_inMemoryCounters.set(followupCounterKey, followupUsedToday + 1);
+
+      res.status(200).json({ answer: sanitizeLatexDelimiters(answerText) });
       return;
     }
 

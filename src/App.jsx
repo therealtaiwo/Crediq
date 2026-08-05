@@ -5648,6 +5648,52 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   return{text:data.text,followUps,cached:false};
 }
 
+// Phase 2 of the follow-up learning system: generate (or reuse) the answer
+// to ONE follow-up question a student tapped. No concept dictionary exists
+// yet (that's Phase 3), so every follow-up is effectively UNMATCHED right
+// now — per the architecture doc's edge case, that means caching stays at
+// Layer 0 (this specific question's doc) rather than a cross-question
+// Layer 1 concept cache. The caller passes the cached `answer` (if any)
+// already present on followUp — this function is only called when it's
+// genuinely missing.
+async function getFollowUpAnswer({user,question,questionId,followUp,groundingExplanation}){
+  let res;
+  try{
+    const token=await auth.currentUser.getIdToken();
+    res=await fetch("/api/ai-tutor",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+      body:JSON.stringify({
+        mode:"followup",
+        subject:question.subject,topic:question.topic,
+        originalQuestion:question.question,groundingExplanation,
+        followUpQuestion:followUp.question,difficulty:followUp.difficulty,type:followUp.type
+      })
+    });
+  }catch(err){return{blocked:"network-error"};}
+
+  if(res.status===429)return{blocked:"rate-limited"};
+  if(!res.ok)return{blocked:"generation-failed"};
+
+  const data=await res.json();
+  if(!data.answer)return{blocked:"generation-failed"};
+
+  // Cache onto the question doc's aiTutorFollowUps array — read-modify-write
+  // since Firestore has no partial-array-element update. Matched by question
+  // text (unique within one question's follow-up set) rather than array
+  // index, so this is safe even if the array order ever changes.
+  try{
+    const qRef=doc(db,"questions",questionId);
+    const qSnap=await getDoc(qRef);
+    const currentFollowUps=qSnap.data()?.aiTutorFollowUps||[];
+    const updatedFollowUps=currentFollowUps.map(f=>
+      f.question===followUp.question?{...f,answer:data.answer}:f);
+    await updateDoc(qRef,{aiTutorFollowUps:updatedFollowUps});
+  }catch(err){console.error("Failed to cache follow-up answer:",err);}
+
+  return{answer:data.answer,cached:false};
+}
+
 // ─── TOPIC NOTES (full-topic JUPEB notes, distinct from per-question AI Tutor) ─
 // Cached per topic (one doc per subject+topic), but tagged with the parent
 // JUPEB course unit (e.g. "PHY 001") so notes can also be browsed/grouped by
@@ -6055,6 +6101,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T,remai
   const[beginnerLoading,setBeginnerLoading]=useState(false);
   const[blockedReason,setBlockedReason]=useState(null);
   const[delightLine,setDelightLine]=useState(null);
+  const[followUps,setFollowUps]=useState([]); // Phase 2: clickable follow-ups
   // remainingToday/setRemainingToday now come from TutorScreen (fetched once
   // per session, not once per question) — see the comment on that state in
   // TutorScreen for why. No local fetch here anymore.
@@ -6066,6 +6113,7 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T,remai
     const result=await getAiTutorExplanation({user,question,questionId,studentAnswer});
     if(result.text){
       setExplanation(result.text);
+      setFollowUps(result.followUps||[]);
       setDelightLine(AI_TUTOR_DELIGHT_LINES[Math.floor(Math.random()*AI_TUTOR_DELIGHT_LINES.length)]);
       setState("shown");
       if(!result.cached&&remainingToday!=null)setRemainingToday(r=>Math.max(0,(r||0)-1));
@@ -6108,6 +6156,18 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T,remai
         </div>
         {delightLine&&<div style={{fontSize:11,color:T.gold,fontStyle:"italic",marginBottom:8,opacity:0.85}}>{delightLine}</div>}
         <AiTutorFormattedText text={shownText} T={T}/>
+        {followUps.length>0&&(
+          <div style={{marginTop:16}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:"0.1em",color:T.gold,marginBottom:8}}>
+              KEEP LEARNING
+            </div>
+            {followUps.map((f,i)=>(
+              <FollowUpItem key={f.question} followUp={f} index={i} user={user} question={question} questionId={questionId}
+                groundingExplanation={shownText} T={T}
+                onAnswered={(idx,answer)=>setFollowUps(prev=>prev.map((x,xi)=>xi===idx?{...x,answer}:x))}/>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -6149,6 +6209,61 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T,remai
         </div>
       )}
     </>
+  );
+}
+
+// ─── FOLLOW-UP ITEM (Phase 2) ─────────────────────────────────────────────────
+// One tappable "Keep Learning" question under an explanation. Idle -> tap ->
+// loading -> shown, same shape as AiTutorButton itself. If followUp.answer is
+// already present (cached from a previous student's tap on this same
+// question, or a previous visit), tapping shows it instantly with zero
+// network call — that's the whole point of Phase 2's caching.
+function FollowUpItem({followUp,index,user,question,questionId,groundingExplanation,onAnswered,T}){
+  const[state,setState]=useState(followUp.answer?"shown":"idle");
+  const[answerText,setAnswerText]=useState(followUp.answer||null);
+  const[blockedReason,setBlockedReason]=useState(null);
+
+  const TYPE_LABELS={understand:"Understand",memorize:"Memorize",mistake:"Avoid Mistakes",practice:"Practice",related:"Related"};
+
+  const handleTap=async()=>{
+    if(state==="shown"){setState("collapsed");return;} // tap again to close, no refetch
+    if(state==="collapsed"||answerText){setState("shown");return;}
+    setState("loading");
+    const result=await getFollowUpAnswer({user,question,questionId,followUp,groundingExplanation});
+    if(result.answer){
+      setAnswerText(result.answer);
+      setState("shown");
+      onAnswered&&onAnswered(index,result.answer);
+    }else{
+      setBlockedReason(result.blocked);
+      setState("blocked");
+    }
+  };
+
+  return(
+    <div style={{marginBottom:8}}>
+      <button onClick={handleTap} disabled={state==="loading"} className="btn-press"
+        style={{width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,
+          background:T.surface,color:T.text,fontSize:12.5,cursor:state==="loading"?"default":"pointer",
+          display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <span>{followUp.question}</span>
+        <span style={{fontFamily:"'DM Mono',monospace",fontSize:8.5,color:T.gold,whiteSpace:"nowrap",opacity:0.8}}>
+          {state==="loading"?"…":(TYPE_LABELS[followUp.type]||"")}
+        </span>
+      </button>
+      {state==="shown"&&(
+        <div style={{marginTop:6,padding:12,borderRadius:8,background:T.surface,border:`1px solid ${T.border}`,fontSize:12.5,lineHeight:1.55}}>
+          <AiTutorFormattedText text={answerText} T={T}/>
+        </div>
+      )}
+      {state==="blocked"&&(
+        <div style={{marginTop:4,fontSize:10.5,color:T.muted,fontStyle:"italic"}}>
+          {blockedReason==="daily-cap-reached"||blockedReason==="rate-limited"
+            ?"Our AI Tutor is currently helping other students — try again in a little while."
+            :"Couldn't load this right now — try again in a moment."}
+        </div>
+      )}
+    </div>
   );
 }
 

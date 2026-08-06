@@ -164,6 +164,7 @@ MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so
 - Wrap any standalone formula (the Formula section's equation line) in $$...$$
 - Wrap any math that appears inline within a sentence — a single variable, a value, a short expression like "n = 5" — in $...$
 - NEVER use \[...\] or \(...\) as delimiters — only $$...$$ and $...$. This is the one rule that breaks rendering completely if not followed.
+- NEVER put a $ or $$ delimiter alone on its own line separate from the formula — e.g. never write "$" on one line, the formula on the next, "$" on a third line. The opening delimiter, the full formula, and the closing delimiter must all be on the SAME line: $\frac{1}{3+4i}=\frac{3-4i}{25}$ — not split across lines. This is the other rule that breaks rendering completely if not followed.
 - Fractions: \\frac{a}{b}, never "a/b"
 - Powers: x^{2} (braces required for anything longer than one character, e.g. x^{10})
 - Subscripts: n_{f}, x_{1}
@@ -238,6 +239,7 @@ MATH NOTATION — rendered with real LaTeX on the client, so use it for every pi
 - Wrap any standalone formula in $$...$$
 - Wrap inline math (a variable, a value, a short expression) in $...$
 - NEVER use \\[...\\] or \\(...\\) — only $$...$$ and $...$. This is the one rule that breaks rendering completely if not followed.
+- NEVER put a $ or $$ delimiter alone on its own line separate from the formula — the opening delimiter, the full formula, and the closing delimiter must all be on the SAME line: $\\frac{1}{3+4i}=\\frac{3-4i}{25}$ — not split across lines. This breaks rendering just as badly as the rule above.
 - Fractions: \\frac{a}{b}, never "a/b". Powers: x^{2} (braces for anything longer than one character). Subscripts: n_{f}. Square roots: \\sqrt{x}.
 - Greek letters and symbols: \\theta \\lambda \\pi \\mu \\omega \\Delta \\times \\div \\pm \\approx \\leq \\geq \\neq — never spelled out.
 
@@ -261,6 +263,7 @@ MATH NOTATION — this is rendered with real LaTeX typesetting on the client, so
 - Wrap any standalone formula in $$...$$
 - Wrap any math that appears inline within a sentence — a single variable, a value, a short expression — in $...$
 - NEVER use \\[...\\] or \\(...\\) as delimiters — only $$...$$ and $...$. This is the one rule that breaks rendering completely if not followed.
+- NEVER put a $ or $$ delimiter alone on its own line separate from the formula — e.g. never write "$" on one line, the formula on the next, "$" on a third line. The opening delimiter, the full formula, and the closing delimiter must all be on the SAME line: $\\frac{1}{3+4i}=\\frac{3-4i}{25}$ — not split across lines. This is the other rule that breaks rendering completely if not followed.
 - Fractions: \\frac{a}{b}, never "a/b"
 - Powers: x^{2} (braces required for anything longer than one character, e.g. x^{10})
 - Subscripts: n_{f}, x_{1}
@@ -311,11 +314,23 @@ function sanitizeLatexDelimiters(text) {
   // but sometimes emits \[...\] / \(...\) anyway, which the client renderer
   // doesn't understand and shows as broken raw text. Normalize here so a
   // prompt slip never reaches the student as visible breakage.
-  return text
+  let out = text
     .replace(/\\\[/g, "$$")
     .replace(/\\\]/g, "$$")
     .replace(/\\\(/g, "$")
     .replace(/\\\)/g, "$");
+  // Second failure mode, same defense-in-depth reasoning: the model sometimes
+  // puts $ / $$ delimiters alone on their own line instead of inline with the
+  // formula (e.g. "$" / "\frac{1}{3+4i}=..." / "$" as three separate lines).
+  // The client renders line-by-line, so a lone opening/closing delimiter on
+  // its own line never matches the same-line $...$ pattern and both the
+  // delimiters and the formula show up as raw untouched text. Collapse those
+  // here too — same fix also lives client-side in preprocessMathText for any
+  // older cached responses already stored without this normalization.
+  out = out
+    .replace(/^[ \t]*\$\$[ \t]*\n([\s\S]*?)\n[ \t]*\$\$[ \t]*$/gm, (_, inner) => `$$${inner.replace(/\s*\n\s*/g, " ").trim()}$$`)
+    .replace(/^[ \t]*\$[ \t]*\n([\s\S]*?)\n[ \t]*\$[ \t]*$/gm, (_, inner) => `$${inner.replace(/\s*\n\s*/g, " ").trim()}$`);
+  return out;
 }
 
 export default async function handler(req, res) {

@@ -5880,7 +5880,20 @@ function preprocessMathText(text){
   return text
     .replace(/\\\[([\s\S]*?)\\\]/g,(_,inner)=>`$$${inner.replace(/\s*\n\s*/g," ").trim()}$$`)
     .replace(/\\\(([\s\S]*?)\\\)/g,(_,inner)=>`$${inner.replace(/\s*\n\s*/g," ").trim()}$`)
-    .replace(/([A-Za-z]{1,3})\u20D7/g,(_,letters)=>`$\\overrightarrow{${letters}}$`);
+    .replace(/([A-Za-z]{1,3})\u20D7/g,(_,letters)=>`$\\overrightarrow{${letters}}$`)
+    // Fixes math rendering as raw "$ \frac{1}{3+4i}=... $" text instead of a
+    // typeset formula. The model sometimes puts the $ / $$ delimiters alone
+    // on their own line instead of wrapping the formula inline — since
+    // rendering happens line-by-line further down, a lone "$" on one line
+    // and the formula on the next never match the same-line $...$ regex, so
+    // both show up as literal untouched text. Collapsing these BEFORE the
+    // line-split (this function runs on the full text first) fixes it at
+    // the root, regardless of which AI Tutor mode or prompt version produced
+    // the text. $$ (block) handled first since it's the more specific case —
+    // otherwise the single-$ pass below would match its opening/closing
+    // pair as two (wrong) inline blocks.
+    .replace(/^[ \t]*\$\$[ \t]*\n([\s\S]*?)\n[ \t]*\$\$[ \t]*$/gm,(_,inner)=>`$$${inner.replace(/\s*\n\s*/g," ").trim()}$$`)
+    .replace(/^[ \t]*\$[ \t]*\n([\s\S]*?)\n[ \t]*\$[ \t]*$/gm,(_,inner)=>`$${inner.replace(/\s*\n\s*/g," ").trim()}$`);
 }
 // Splits a line on $$block$$ / $inline$ math delimiters, rendering each
 // math segment with real KaTeX typesetting and everything else through the
@@ -6245,7 +6258,24 @@ function AiTutorButton({user,question,questionId,studentAnswer,onUpgrade,T,remai
     const message=(blockedReason==="daily-cap-reached"||blockedReason==="rate-limited")
       ?"Our AI Tutor is currently helping other students. The explanation above still applies — try again in a little while."
       :"AI Tutor couldn't generate an explanation right now — the explanation above still applies.";
-    return <div style={{marginTop:12,fontSize:11,color:T.muted,fontStyle:"italic"}}>{message}</div>;
+    // Retry only for failures a second attempt could plausibly fix — not
+    // "excluded-topic" (that topic is permanently excluded, retrying is
+    // pointless and would just confuse the student into thinking it's a
+    // glitch) or "premium-required" (that's a paywall, not TutorScreen).
+    const canRetry=["network-error","generation-failed","rate-limited","daily-cap-reached"].includes(blockedReason);
+    return(
+      <div style={{marginTop:12}}>
+        <div style={{fontSize:11,color:T.muted,fontStyle:"italic"}}>{message}</div>
+        {canRetry&&(
+          <button onClick={handleTap} className="btn-press"
+            style={{marginTop:8,padding:"8px 16px",borderRadius:8,border:`1px solid ${T.gold}55`,
+              background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
+              fontWeight:700,letterSpacing:"0.04em",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}>
+            <RefreshCw size={12}/> Try again
+          </button>
+        )}
+      </div>
+    );
   }
 
   return(
@@ -6310,10 +6340,18 @@ function FollowUpItem({followUp,index,user,question,questionId,groundingExplanat
         </div>
       )}
       {state==="blocked"&&(
-        <div style={{marginTop:4,fontSize:10.5,color:T.muted,fontStyle:"italic"}}>
-          {blockedReason==="daily-cap-reached"||blockedReason==="rate-limited"
-            ?"Our AI Tutor is currently helping other students — try again in a little while."
-            :"Couldn't load this right now — try again in a moment."}
+        <div style={{marginTop:4}}>
+          <div style={{fontSize:10.5,color:T.muted,fontStyle:"italic"}}>
+            {blockedReason==="daily-cap-reached"||blockedReason==="rate-limited"
+              ?"Our AI Tutor is currently helping other students — try again in a little while."
+              :"Couldn't load this right now — try again in a moment."}
+          </div>
+          <button onClick={handleTap} className="btn-press"
+            style={{marginTop:6,padding:"6px 12px",borderRadius:7,border:`1px solid ${T.gold}55`,
+              background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:9.5,
+              fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:5}}>
+            <RefreshCw size={11}/> Try again
+          </button>
         </div>
       )}
     </div>
@@ -6371,7 +6409,17 @@ function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc
     const message=blockedReason==="rate-limited"
       ?"Notes generation is busy right now — try again in a little while."
       :"Couldn't generate notes right now — try again shortly.";
-    return <div style={{marginTop:10,fontSize:11,color:T.muted,fontStyle:"italic"}}>{message}</div>;
+    return(
+      <div style={{marginTop:10}}>
+        <div style={{fontSize:11,color:T.muted,fontStyle:"italic"}}>{message}</div>
+        <button onClick={handleTap} className="btn-press"
+          style={{marginTop:8,padding:"8px 16px",borderRadius:8,border:`1px solid ${T.gold}55`,
+            background:"transparent",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
+            fontWeight:700,letterSpacing:"0.04em",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:6}}>
+          <RefreshCw size={12}/> Try again
+        </button>
+      </div>
+    );
   }
 
   return(

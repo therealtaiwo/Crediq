@@ -5,7 +5,8 @@ import {
   ChevronLeft, ChevronDown, CheckCircle, AlertCircle, Zap, WifiOff, X, AlertTriangle,
   Eye, EyeOff, MessageCircle, Flag, Award, Users, Calendar, User,
   TrendingUp, Clock, Star, ChevronRight, Shield, BookOpen, Lock,
-  RefreshCw, Copy, Bell, Brain, Sparkles, GraduationCap, Sigma, Search
+  RefreshCw, Copy, Bell, Brain, Sparkles, GraduationCap, Sigma, Search,
+  Atom, FlaskConical, Leaf, Calculator
 } from "lucide-react";
 import { auth, db, track } from "./firebase";
 import {
@@ -10700,6 +10701,71 @@ function hashTheoryAnswer(text, photo) {
   return String(h);
 }
 
+// ─── SUB-QUESTION TEXT — readable sub-part layout ──────────────────────────
+// JUPEB theory sub-questions are frequently multi-part within one part, e.g.
+// (A) contains "(i) State X. [1 mark] (ii) State Y. [1 mark] (iii) Show Z.
+// [2 marks]" as one dense run-on paragraph — that's exactly what students
+// found hard to scan (2026-08-06 feedback). This is a display-only parser:
+// it never touches Firestore data, just detects the existing (i)/(ii)/(iii)
+// numbering already present in the source text and lays each one out as its
+// own row with its own mark badge. Falls back to the original single-block
+// render untouched for any sq.text that doesn't have 2+ such markers — most
+// short sub-questions don't, and should look exactly as they did before.
+function parseRomanSubParts(text){
+  if(!text)return null;
+  const ROMAN=/\((i{1,3}|iv|v|vi{0,3}|ix|x)\)/gi;
+  const matches=[...text.matchAll(ROMAN)];
+  if(matches.length<2)return null;
+  const parts=[];
+  for(let i=0;i<matches.length;i++){
+    const label=matches[i][0];
+    const start=matches[i].index+label.length;
+    const end=i+1<matches.length?matches[i+1].index:text.length;
+    let content=text.slice(start,end).trim();
+    const markMatch=content.match(/\[\s*(\d+)\s*marks?\s*\]\s*$/i);
+    let marks=null;
+    if(markMatch){marks=markMatch[1];content=content.slice(0,markMatch.index).trim();}
+    parts.push({label,content,marks});
+  }
+  return parts;
+}
+function SubQuestionText({text,T}){
+  const parts=parseRomanSubParts(text);
+  if(!parts){
+    return <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{renderMathText(text,T)}</div>;
+  }
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {parts.map((p,i)=>(
+        <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:T.gold,flexShrink:0,minWidth:22,paddingTop:1}}>{p.label}</span>
+          <div style={{flex:1,fontSize:14,lineHeight:1.6,color:T.text}}>
+            {renderMathText(p.content,T)}
+            {p.marks&&(
+              <span style={{marginLeft:8,fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,whiteSpace:"nowrap"}}>
+                [{p.marks} mark{p.marks==="1"?"":"s"}]
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Per-subject identity for the Theory setup screen — a plain list of subject
+// names read the same regardless of which one, so a curious student had
+// nothing to visually latch onto. Icon + one-line description gives each
+// subject its own presence without introducing any color outside the
+// existing gold/green brand tokens.
+const THEORY_SUBJECT_META={
+  Physics:{icon:Atom,blurb:"Mechanics, waves, electricity & more"},
+  Chemistry:{icon:FlaskConical,blurb:"Organic, inorganic & physical chemistry"},
+  Mathematics:{icon:Calculator,blurb:"Pure maths, statistics & mechanics"},
+  Biology:{icon:Leaf,blurb:"Cell biology, genetics, ecology & more"},
+};
+const theorySubjectMeta=s=>THEORY_SUBJECT_META[s]||{icon:BookOpen,blurb:"Past JUPEB theory questions"};
+
 // ─── THEORY SCREEN ────────────────────────────────────────────────────────────
 function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   const[phase,setPhase]=useState("setup");
@@ -11028,21 +11094,40 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
 
         <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.3}}
           style={{flex:1,padding:"24px 20px",overflowY:"auto"}}>
+          {/* Value-prop line — the thing that should make a student actually want
+              to come back to this screen, not just a functional filter form. */}
+          <div style={{fontSize:13,color:T.muted,lineHeight:1.6,marginBottom:26,maxWidth:"92%"}}>
+            Real past JUPEB questions, answered your way — typed or photographed — and marked instantly with the reasoning behind every mark.
+          </div>
+
           {/* Subject */}
-          <div style={{marginBottom:22}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:9}}>SUBJECT</div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {subjectList.map(s=>(
-                <button key={s} className="btn-press" onClick={()=>setSubject(s)}
-                  style={{padding:"13px 16px",borderRadius:10,border:`1px solid ${subject===s?T.gold:T.border}`,
-                    background:subject===s?"rgba(184,151,62,0.1)":T.surface,color:subject===s?T.gold:T.text,
-                    cursor:"pointer",textAlign:"left",fontSize:14,fontWeight:subject===s?600:400,
-                    display:"flex",justifyContent:"space-between",alignItems:"center",
-                    boxShadow:subject===s?"0 4px 16px rgba(184,151,62,0.12)":"none",transition:"box-shadow 0.2s"}}>
-                  {s}
-                  {subject===s&&<CheckCircle size={16} color={T.gold}/>}
-                </button>
-              ))}
+          <div style={{marginBottom:24}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>SUBJECT</div>
+            <div style={{display:"flex",flexDirection:"column",gap:9}}>
+              {subjectList.map(s=>{
+                const meta=theorySubjectMeta(s);
+                const Icon=meta.icon;
+                const active=subject===s;
+                return(
+                  <button key={s} className="btn-press" onClick={()=>setSubject(s)}
+                    style={{padding:"14px 16px",borderRadius:12,border:`1px solid ${active?T.gold:T.border}`,
+                      background:active?"rgba(184,151,62,0.1)":T.surface,cursor:"pointer",textAlign:"left",
+                      display:"flex",alignItems:"center",gap:13,
+                      boxShadow:active?"0 4px 18px rgba(184,151,62,0.14)":"none",transition:"box-shadow 0.2s"}}>
+                    <div style={{flexShrink:0,width:38,height:38,borderRadius:10,
+                      background:active?"rgba(184,151,62,0.18)":`${T.border}`,
+                      border:`1px solid ${active?T.gold+"60":T.border}`,
+                      display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <Icon size={18} color={active?T.gold:T.muted} strokeWidth={1.8}/>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14.5,fontWeight:active?600:500,color:active?T.gold:T.text}}>{s}</div>
+                      <div style={{fontSize:10.5,color:T.muted,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{meta.blurb}</div>
+                    </div>
+                    {active&&<CheckCircle size={17} color={T.gold} style={{flexShrink:0}}/>}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -11062,7 +11147,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
             </div>
           </div>
 
-          {/* Live question count — matches CBT setup wording so it doesn't feel like a different app */}
+          {/* Live question count — matches CBT setup wording so it doesn't feel like a different app.
+              Fixed 2026-08-06: a failed count query left availableCount as null (its initial
+              value AND its error fallback), which fell through every branch below into the
+              template literal and rendered the literal text "null questions available". Now
+              explicitly distinguished from a genuine zero-result count. */}
           {subject&&(
             <motion.div key={`${subject}-${year}-${availableCount}`} initial={{opacity:0}} animate={{opacity:1}}
               style={{marginBottom:22,padding:"11px 14px",borderRadius:8,
@@ -11071,6 +11160,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,
                 color:countLoading?T.muted:availableCount===0?"#f87171":T.gold}}>
                 {countLoading?"Checking availability…"
+                  :availableCount===null?"Couldn't check availability right now — you can still try"
                   :availableCount===0?"No questions available for this selection — try a different year"
                   :`${availableCount} question${availableCount===1?"":"s"} available`}
               </div>
@@ -11226,7 +11316,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                         <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
                         <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
                       </div>
-                      <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{sq.text}</div>
+                      <SubQuestionText text={sq.text} T={T}/>
                     </div>
                   ))}
                 </div>
@@ -11274,7 +11364,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                       <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>({sq.part.toUpperCase()})</span>
                       <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{sq.marks||""}{sq.marks?" marks":""}</span>
                     </div>
-                    <div style={{fontSize:14,lineHeight:1.6,color:T.text,marginBottom:12}}>{sq.text}</div>
+                    <div style={{marginBottom:12}}><SubQuestionText text={sq.text} T={T}/></div>
 
                     {/* Model answer — revealed */}
                     {isRevealed&&sq.answer&&(

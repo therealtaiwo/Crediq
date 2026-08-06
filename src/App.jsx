@@ -10881,17 +10881,51 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   const setMark=(qId,part,val)=>setMarks(prev=>({...prev,[qId]:{...(prev[qId]||{}),[part]:val}}));
   const toggleReveal=(qId)=>setRevealed(prev=>{const s=new Set(prev);s.has(qId)?s.delete(qId):s.add(qId);return s;});
 
-  const handlePhotoSelect=e=>{
+  // Resizes to a max dimension and re-encodes as JPEG at reduced quality —
+  // keeps handwriting legible while keeping the request well under Vercel's
+  // 4.5MB body limit. Confirmed via Vercel logs (2026-08-06) that uncompressed
+  // phone-camera photos were hitting 413 Payload Too Large before the
+  // grade-theory function even ran — this is the actual fix for that.
+  const compressImage=(file,maxDim=1600,quality=0.75)=>new Promise((resolve,reject)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      let{width,height}=img;
+      if(width>height&&width>maxDim){height=Math.round(height*(maxDim/width));width=maxDim;}
+      else if(height>=width&&height>maxDim){width=Math.round(width*(maxDim/height));height=maxDim;}
+      const canvas=document.createElement("canvas");
+      canvas.width=width;canvas.height=height;
+      const ctx=canvas.getContext("2d");
+      ctx.drawImage(img,0,0,width,height);
+      const dataUrl=canvas.toDataURL("image/jpeg",quality);
+      resolve(dataUrl);
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("Could not read image"));};
+    img.src=url;
+  });
+
+  const handlePhotoSelect=async e=>{
     const file=e.target.files?.[0];
     if(!file||!q)return;
-    const reader=new FileReader();
-    reader.onload=()=>{
-      const result=reader.result;
-      const base64=String(result).split(",")[1];
-      setAnswerPhoto(prev=>({...prev,[q.id]:{base64,mimeType:file.type||"image/jpeg",previewUrl:result}}));
-    };
-    reader.readAsDataURL(file);
     e.target.value="";
+    try{
+      const compressedDataUrl=await compressImage(file);
+      const base64=compressedDataUrl.split(",")[1];
+      setAnswerPhoto(prev=>({...prev,[q.id]:{base64,mimeType:"image/jpeg",previewUrl:compressedDataUrl}}));
+    }catch(err){
+      console.error("Photo compression failed:",err);
+      // Fall back to the original uncompressed read rather than blocking
+      // the student entirely — worst case they hit the same 413 as before,
+      // not a silent dead end.
+      const reader=new FileReader();
+      reader.onload=()=>{
+        const result=reader.result;
+        const base64=String(result).split(",")[1];
+        setAnswerPhoto(prev=>({...prev,[q.id]:{base64,mimeType:file.type||"image/jpeg",previewUrl:result}}));
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const gradeOneQuestion=async qn=>{

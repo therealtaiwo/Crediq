@@ -4345,6 +4345,41 @@ function DashboardScreen({user,history,historyLoaded,QB,onNav,onLogout,dark,setD
           </motion.button>
         </motion.div>
 
+        {/* ── THEORY QUESTIONS — new launch, promoted here so it isn't
+             buried inside Setup where nobody would find it on day one.
+             Smaller visual weight than the AI Tutor hero card above (no
+             ambient glow animation) so AI Tutor stays the clear "first
+             thing", but still gets a NEW badge and its own gradient CTA
+             so it reads as a real feature, not an afterthought. ── */}
+        <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:0.5,delay:0.1,ease:EASE}}
+          style={{background:T.surface2,border:`1px solid ${T.gold}50`,borderRadius:18,padding:"18px 18px 16px",marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"flex-start",gap:14}}>
+            <div style={{flexShrink:0,width:48,height:48,borderRadius:13,background:`linear-gradient(135deg,${T.gold}28 0%,${T.gold}0a 100%)`,border:`1px solid ${T.gold}50`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <BookOpen size={22} color={T.gold} strokeWidth={1.8}/>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,color:T.text}}>Theory Questions</div>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:"0.08em",padding:"2px 7px",borderRadius:20,background:"rgba(74,222,128,0.15)",color:"#4ade80"}}>NEW</span>
+              </div>
+              <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.5}}>
+                Essay & structured questions from real JUPEB papers, marked instantly by AI — see exactly where you lost marks.
+              </div>
+            </div>
+          </div>
+          {user?.isPremium?(
+            <motion.button whileTap={{scale:0.97}} onClick={()=>onNav("setup")}
+              style={{width:"100%",marginTop:14,padding:"12px 0",border:"none",borderRadius:24,background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 20px rgba(0,75,59,0.35)"}}>
+              Try Theory Questions →
+            </motion.button>
+          ):(
+            <motion.button whileTap={{scale:0.97}} onClick={()=>onUpgrade&&onUpgrade("theory_locked")}
+              style={{width:"100%",marginTop:14,padding:"12px 0",border:`1px solid ${T.gold}50`,borderRadius:24,background:`${T.gold}12`,color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:700,letterSpacing:"0.04em",cursor:"pointer"}}>
+              PREMIUM · Unlock Theory Questions →
+            </motion.button>
+          )}
+        </motion.div>
+
         {/* ── FIRST SESSION ACTIVATION ── */}
         {showActivation&&(
           <motion.div initial={{opacity:0,y:-16,scale:0.97}} animate={{opacity:1,y:0,scale:1}} transition={{type:"spring",stiffness:300,damping:22,delay:0.4}}
@@ -10933,26 +10968,29 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   if(phase==="setup"){
     return(
       <div style={{minHeight:"100vh",background:T.bg,color:T.text,display:"flex",flexDirection:"column"}}>
-        {/* Header */}
+        {/* Header — Playfair Display headline to match Review/Summary, instead of
+            the plain bold-sans title this screen had before. */}
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"20px 20px 0"}}>
           <button onClick={onBack} style={{background:"none",border:"none",color:T.text,cursor:"pointer",padding:4}}><ChevronLeft size={22}/></button>
           <div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.14em",marginBottom:2}}>THEORY PRACTICE</div>
-            <div style={{fontSize:18,fontWeight:700,letterSpacing:-0.3}}>Essay & Structured Questions</div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:700,letterSpacing:-0.3}}>Essay & Structured Questions</div>
           </div>
         </div>
 
-        <div style={{flex:1,padding:"24px 20px",overflowY:"auto"}}>
+        <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.3}}
+          style={{flex:1,padding:"24px 20px",overflowY:"auto"}}>
           {/* Subject */}
-          <div style={{marginBottom:20}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>SUBJECT</div>
+          <div style={{marginBottom:22}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:9}}>SUBJECT</div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {subjectList.map(s=>(
-                <button key={s} onClick={()=>setSubject(s)}
-                  style={{padding:"12px 16px",borderRadius:10,border:`1px solid ${subject===s?T.gold:T.border}`,
+                <button key={s} className="btn-press" onClick={()=>setSubject(s)}
+                  style={{padding:"13px 16px",borderRadius:10,border:`1px solid ${subject===s?T.gold:T.border}`,
                     background:subject===s?"rgba(184,151,62,0.1)":T.surface,color:subject===s?T.gold:T.text,
                     cursor:"pointer",textAlign:"left",fontSize:14,fontWeight:subject===s?600:400,
-                    display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    display:"flex",justifyContent:"space-between",alignItems:"center",
+                    boxShadow:subject===s?"0 4px 16px rgba(184,151,62,0.12)":"none",transition:"box-shadow 0.2s"}}>
                   {s}
                   {subject===s&&<CheckCircle size={16} color={T.gold}/>}
                 </button>
@@ -10961,11 +10999,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
           </div>
 
           {/* Year */}
-          <div style={{marginBottom:20}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>YEAR</div>
+          <div style={{marginBottom:22}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:9}}>YEAR</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
               {["all",...YEARS].map(y=>(
-                <button key={y} onClick={()=>setYear(String(y))}
+                <button key={y} className="btn-press" onClick={()=>setYear(String(y))}
                   style={{padding:"8px 14px",borderRadius:8,border:`1px solid ${String(year)===String(y)?T.gold:T.border}`,
                     background:String(year)===String(y)?"rgba(184,151,62,0.1)":T.surface,
                     color:String(year)===String(y)?T.gold:T.text,cursor:"pointer",
@@ -10978,7 +11016,8 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
 
           {/* Live question count — matches CBT setup wording so it doesn't feel like a different app */}
           {subject&&(
-            <div style={{marginBottom:20,padding:"10px 14px",borderRadius:8,
+            <motion.div key={`${subject}-${year}-${availableCount}`} initial={{opacity:0}} animate={{opacity:1}}
+              style={{marginBottom:22,padding:"11px 14px",borderRadius:8,
               background:availableCount===0?"rgba(239,68,68,0.06)":"rgba(184,151,62,0.06)",
               border:`1px solid ${availableCount===0?"rgba(239,68,68,0.2)":"rgba(184,151,62,0.18)"}`}}>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,
@@ -10987,15 +11026,15 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                   :availableCount===0?"No questions available for this selection — try a different year"
                   :`${availableCount} question${availableCount===1?"":"s"} available`}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Paper */}
-          <div style={{marginBottom:28}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:8}}>PAPER</div>
+          <div style={{marginBottom:30}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:9}}>PAPER</div>
             <div style={{display:"flex",gap:8}}>
               {[{v:0,l:"All Papers"},{v:1,l:"Paper 1"},{v:2,l:"Paper 2"}].map(p=>(
-                <button key={p.v} onClick={()=>setPaper(p.v)}
+                <button key={p.v} className="btn-press" onClick={()=>setPaper(p.v)}
                   style={{flex:1,padding:"10px 0",borderRadius:8,border:`1px solid ${paper===p.v?T.gold:T.border}`,
                     background:paper===p.v?"rgba(184,151,62,0.1)":T.surface,
                     color:paper===p.v?T.gold:T.text,cursor:"pointer",
@@ -11008,15 +11047,19 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
 
           {err&&<div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#f87171",marginBottom:16}}>{err}</div>}
 
+          {/* CTA — matches the gradient treatment used on Review's "Submit All"
+              button, instead of the flat-gold button this screen had before,
+              so the same feature reads as one cohesive product end to end. */}
           <button onClick={loadQs} disabled={loading||!subject||availableCount===0}
-            style={{width:"100%",padding:"14px",borderRadius:10,border:"none",
-              background:(!subject||loading||availableCount===0)?"rgba(184,151,62,0.3)":T.gold,
-              color:(!subject||loading||availableCount===0)?"rgba(247,243,236,0.4)":"#1a1209",
-              fontWeight:700,fontSize:15,cursor:(!subject||loading||availableCount===0)?"not-allowed":"pointer",
-              fontFamily:"'DM Mono',monospace",letterSpacing:"0.04em"}}>
+            style={{width:"100%",padding:"16px",borderRadius:12,border:"none",
+              background:(!subject||loading||availableCount===0)?"rgba(184,151,62,0.2)":"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",
+              color:(!subject||loading||availableCount===0)?"rgba(247,243,236,0.3)":"#F7F3EC",
+              fontFamily:"'Playfair Display',serif",fontWeight:700,fontSize:16,
+              cursor:(!subject||loading||availableCount===0)?"not-allowed":"pointer",
+              boxShadow:(!subject||loading||availableCount===0)?"none":"0 8px 28px rgba(0,75,59,0.4)"}}>
             {loading?"Loading Questions...":"Begin Theory Practice →"}
           </button>
-        </div>
+        </motion.div>
       </div>
     );
   }
@@ -11067,8 +11110,15 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
           {/* Year/Paper badge */}
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginBottom:14}}>{q.year} · Paper {q.paperNumber||1}{q.totalMarks?` · ${q.totalMarks} marks`:""}</div>
 
-          {/* Question text — only show if not empty */}
-          {q.question&&q.question.trim()&&(
+          {/* Question text — only when the question is flat (no subQuestions).
+              When subQuestions[] exists, each part already carries its own
+              full text (including any preamble it needs) — showing q.question
+              too was duplicating the same content twice on screen. Fixed
+              2026-08-05 after this surfaced in PHY-2019/2020 content;
+              AGR-2019 rows from the same theory-fix batch may have the same
+              redundant `question` field still sitting in Firestore — harmless
+              now (this check hides it), but worth a data cleanup pass later. */}
+          {q.question&&q.question.trim()&&sqs.length===0&&(
             <div style={{fontSize:15,lineHeight:1.65,color:T.text,marginBottom:20,padding:"16px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`,whiteSpace:"pre-wrap"}}>
               {renderMathText(q.question,T)}
             </div>

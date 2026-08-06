@@ -5657,9 +5657,9 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
   const isLastFreeUse=!user?.isPremium&&count===AI_TUTOR_FREE_DAILY_CAP-1;
 
   let res;
-  try{
+  const doFetch=async()=>{
     const token=await auth.currentUser.getIdToken();
-    res=await fetch("/api/ai-tutor",{
+    return fetch("/api/ai-tutor",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
@@ -5668,7 +5668,20 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
         explanation:question.explanation,difficulty:question.difficulty,style,isLastFreeUse
       })
     });
-  }catch(err){return{blocked:"network-error"};}
+  };
+
+  try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+
+  // Auto-retry once on a 429 using Groq's own exact wait time -- see the
+  // matching comment in getTopicNotes above for why (2026-08-06).
+  if(res.status===429){
+    let retryAfter=null;
+    try{retryAfter=(await res.json())?.retryAfterSeconds;}catch{}
+    if(retryAfter&&retryAfter>0&&retryAfter<=20){
+      await new Promise(r=>setTimeout(r,retryAfter*1000+300));
+      try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+    }
+  }
 
   if(res.status===429)return{blocked:"rate-limited"};
   if(!res.ok)return{blocked:"generation-failed"};
@@ -5694,10 +5707,9 @@ async function getAiTutorExplanation({user,question,questionId,studentAnswer,sty
 // already present on followUp — this function is only called when it's
 // genuinely missing.
 async function getFollowUpAnswer({user,question,questionId,followUp,groundingExplanation}){
-  let res;
-  try{
+  const doFetch=async()=>{
     const token=await auth.currentUser.getIdToken();
-    res=await fetch("/api/ai-tutor",{
+    return fetch("/api/ai-tutor",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
@@ -5707,7 +5719,21 @@ async function getFollowUpAnswer({user,question,questionId,followUp,groundingExp
         followUpQuestion:followUp.question,difficulty:followUp.difficulty,type:followUp.type
       })
     });
-  }catch(err){return{blocked:"network-error"};}
+  };
+
+  let res;
+  try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+
+  // Auto-retry once on a 429 using Groq's own exact wait time -- see the
+  // matching comment in getTopicNotes above for why (2026-08-06).
+  if(res.status===429){
+    let retryAfter=null;
+    try{retryAfter=(await res.json())?.retryAfterSeconds;}catch{}
+    if(retryAfter&&retryAfter>0&&retryAfter<=20){
+      await new Promise(r=>setTimeout(r,retryAfter*1000+300));
+      try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+    }
+  }
 
   if(res.status===429)return{blocked:"rate-limited"};
   if(!res.ok)return{blocked:"generation-failed"};
@@ -5755,10 +5781,9 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   const courseDesc=explicitCourseDesc||course?.desc||"";
   const courseKeywords=explicitKeywords||course?.keywords||[];
 
-  let res;
-  try{
+  const doFetch=async()=>{
     const token=await auth.currentUser.getIdToken();
-    res=await fetch("/api/ai-tutor",{
+    return fetch("/api/ai-tutor",{
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
       body:JSON.stringify({
@@ -5767,7 +5792,26 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
         keywords:courseKeywords.slice(0,25),
       })
     });
-  }catch(err){return{blocked:"network-error"};}
+  };
+
+  let res;
+  try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+
+  // Auto-retry once on a 429, using the exact wait time Groq gave the server
+  // (see extractRetryAfterSeconds in ai-tutor.js) -- added 2026-08-06 after a
+  // real collision where two deep Notes generations ~39s apart both hit the
+  // primary AND fallback models' rate limits together. Capped at 20s so a
+  // slow/large retry-after never leaves the student staring at a spinner
+  // indefinitely; beyond that, fall through to the existing manual "Try
+  // again" UI same as before.
+  if(res.status===429){
+    let retryAfter=null;
+    try{retryAfter=(await res.json())?.retryAfterSeconds;}catch{}
+    if(retryAfter&&retryAfter>0&&retryAfter<=20){
+      await new Promise(r=>setTimeout(r,retryAfter*1000+300)); // +300ms buffer past Groq's own estimate
+      try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+    }
+  }
 
   if(res.status===429)return{blocked:"rate-limited"};
   if(!res.ok)return{blocked:"generation-failed"};

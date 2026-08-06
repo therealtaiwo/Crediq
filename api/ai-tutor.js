@@ -97,6 +97,21 @@ const FALLBACK_MODEL = "openai/gpt-oss-120b"; // used when the primary model
 // also has the stored explanation always visible regardless, so this is
 // belt-and-suspenders there, not the only safety net.
 
+// Groq's 429 error body includes its own authoritative wait time, e.g.
+// "Please try again in 15.51s." -- added 2026-08-06 after a real production
+// collision: two deep Notes generations landing ~39s apart both hit the
+// primary model's limit, and the second one's fallback attempt ALSO 429'd
+// because the fallback bucket (8K TPM) still had tokens reserved from the
+// first request. Parsing Groq's exact figure lets the client retry at
+// precisely the right moment instead of the student manually tapping "Try
+// again" and possibly guessing wrong. Returns null if no figure is found
+// (message format changed, or a 429 with no body) so callers can fall back
+// to the existing manual-retry UI unchanged.
+function extractRetryAfterSeconds(errText) {
+  const match = /try again in ([\d.]+)s/i.exec(errText || "");
+  return match ? parseFloat(match[1]) : null;
+}
+
 // Calls Groq with the primary model; on a 429 specifically, retries once with
 // the fallback model. Any other failure (400, 500, etc.) is returned as-is —
 // retrying with a different model won't fix a bad request or a Groq outage.
@@ -428,6 +443,10 @@ Write full JUPEB-level study notes on this topic.`;
         console.error("Groq API error (notes):", aiRes.status, errText);
         res.status(aiRes.status === 429 ? 429 : 502).json({
           error: "Notes generation unavailable right now",
+          // See extractRetryAfterSeconds above -- lets the client auto-retry
+          // at the exact moment Groq says capacity frees up, instead of only
+          // offering a manual "Try again" button.
+          retryAfterSeconds: aiRes.status === 429 ? extractRetryAfterSeconds(errText) : null,
         });
         return;
       }
@@ -498,6 +517,7 @@ The student tapped this follow-up question — answer it directly: ${followUpQue
         res.status(followupRes.status === 429 ? 429 : 502).json({
           error: "AI Tutor unavailable right now",
           fallbackToStored: true,
+          retryAfterSeconds: followupRes.status === 429 ? extractRetryAfterSeconds(errText) : null,
         });
         return;
       }
@@ -585,6 +605,7 @@ Help the student understand why the correct answer is right${studentAnswer ? ", 
       res.status(aiRes.status === 429 ? 429 : 502).json({
         error: "AI Tutor unavailable right now",
         fallbackToStored: true,
+        retryAfterSeconds: aiRes.status === 429 ? extractRetryAfterSeconds(errText) : null,
       });
       return;
     }

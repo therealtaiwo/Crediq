@@ -10948,8 +10948,16 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
     }catch(err){console.error("Theory grade cache read failed (non-fatal, will regenerate):",err);}
 
     try{
-      const parts=(qn.subQuestions?.length?qn.subQuestions:[{part:"main",answer:qn.answer,marks:qn.totalMarks||10}])
-        .map(sq=>({part:sq.part,modelAnswer:sq.answer||"",maxMarks:sq.marks||qn.totalMarks||10}));
+      // Bug fix 2026-08-06: this used to omit the question prompt entirely,
+      // sending Gemini only the model answer + max marks with no indication
+      // of what was actually being asked. Gemini correctly had no way to
+      // grade against a question it never saw, and (reasonably) reported
+      // "the question prompt was missing" -- it meant from the payload, not
+      // from the student's photo. sq.text is what's already shown on-screen
+      // to the student in the practice view (see SubQuestionText below), so
+      // it was available all along, just never forwarded here.
+      const parts=(qn.subQuestions?.length?qn.subQuestions:[{part:"main",text:qn.question||"",answer:qn.answer,marks:qn.totalMarks||10}])
+        .map(sq=>({part:sq.part,questionText:sq.text||"",modelAnswer:sq.answer||"",maxMarks:sq.marks||qn.totalMarks||10}));
       const questionType=qn.has_diagram?"diagram":(["Physics","Chemistry","Mathematics"].includes(subject)?"numeric":"conceptual");
       const token=await auth.currentUser.getIdToken();
       const res=await fetch("/api/grade-theory",{

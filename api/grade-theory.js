@@ -163,8 +163,15 @@ export default async function handler(req, res) {
         text: `Subject: ${subject}\nTopic: ${topic || "N/A"}\n\nPrevious feedback given:\n${priorFeedback || ""}\n\nStudent's follow-up: "I still don't understand, please explain more clearly."`
       });
     } else {
+      // Bug fix 2026-08-06: previously omitted the question text entirely --
+      // Gemini was only ever given the model answer and mark allocation,
+      // with no indication of what question was actually asked. That's why
+      // it was reporting "the question prompt was missing from your
+      // submission": true from its point of view, just misattributed to the
+      // student instead of this payload. questionText now comes from the
+      // client (parts[].questionText, sourced from sq.text on subQuestions).
       const partsDescription = parts.map(p =>
-        `Part ${p.part} (max ${p.maxMarks} marks) — Model answer: ${p.modelAnswer}`
+        `Part ${p.part} (max ${p.maxMarks} marks)\nQuestion: ${p.questionText || "(question text not provided)"}\nModel answer: ${p.modelAnswer}`
       ).join("\n\n");
 
       userParts.push({

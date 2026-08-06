@@ -10786,6 +10786,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   const[timerMode,setTimerMode]=useState("countdown"); // countdown | countup — decided at load time based on total marks
   const[elapsedSeconds,setElapsedSeconds]=useState(0);
   const[gradingProgress,setGradingProgress]=useState({current:0,total:0});
+  const[gradingCurrent,setGradingCurrent]=useState(false); // true while THIS question is being graded, immediate-feedback flow
   const[hasReachedReview,setHasReachedReview]=useState(false);
   const[expandedSummaryQ,setExpandedSummaryQ]=useState(null);
   const startRef=useRef(Date.now());
@@ -10942,6 +10943,25 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
     }catch{return{error:true};}
   };
 
+  // Immediate per-question feedback (like AI Tutor: answer -> see feedback -> move on),
+  // rather than the old flow of collecting every answer and grading as one batch at the
+  // end. Grades ONLY the current question. Reuses gradeOneQuestion's cache check and
+  // Firestore write untouched — this is a new caller, not a new grading path.
+  const submitCurrentForGrading=async()=>{
+    if(!q||gradedResults[q.id]||gradingCurrent)return;
+    if(aiCreditsLeft<=0){setAiError(prev=>({...prev,[q.id]:true}));return;}
+    setGradingCurrent(true);
+    const data=await gradeOneQuestion(q);
+    setGradingCurrent(false);
+    if(data&&!data.error){
+      setGradedResults(prev=>({...prev,[q.id]:data}));
+      // Cache hits are free — no Gemini call was made, matches the batch path's logic.
+      if(!data.fromCache)updateDoc(doc(db,"users",user.uid),{aiCredits:Math.max(0,aiCreditsLeft-1)}).catch(()=>{});
+    }else{
+      setAiError(prev=>({...prev,[q.id]:true}));
+    }
+  };
+
   const askFollowUp=async qn=>{
     if(followUpUsed[qn.id])return;
     const graded=gradedResults[qn.id];
@@ -10968,7 +10988,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
 
   const canNext=()=>{
     if(!q)return false;
-    if(canUseAI)return !!(answerText[q.id]?.trim()||answerPhoto[q.id]);
+    // AI mode now requires seeing this question's feedback (or an explicit
+    // skip after an error/no-credits) before moving on — same "answer, see
+    // the result, then continue" shape as AI Tutor, instead of just checking
+    // that something was typed or photographed.
+    if(canUseAI)return !!gradedResults[q.id]||!!aiError[q.id];
     const sqs=q.subQuestions||[];
     const qm=marks[q.id]||{};
     if(!sqs.length)return !!qm.main;
@@ -11042,9 +11066,16 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   };
 
   const handleNext=()=>{
+    // Grading now happens per-question as it's answered (see submitCurrentForGrading),
+    // not in a batch at the end — so there's no more "Review All Answers" detour for
+    // AI-mode users. gradedResults is already fully populated by the time the last
+    // question is reached, so finish() has everything it needs either way. The old
+    // batch review/grading screens (phase "review"/"grading", runGradingBatch) are
+    // left in place below as a dormant fallback rather than deleted, in case a future
+    // pass wants to resurrect a "grade the ones I skipped" recovery flow — nothing in
+    // the normal flow navigates to them anymore.
     if(idx<questions.length-1){setIdx(i=>i+1);return;}
-    if(canUseAI){setHasReachedReview(true);setPhase("review");}
-    else finish();
+    finish();
   };
 
   useEffect(()=>{
@@ -11054,7 +11085,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
         setTimeLeft(t=>{
           if(t<=1){
             clearInterval(timerRef.current);
-            if(canUseAI){setHasReachedReview(true);setPhase("review");}else finish();
+            finish();
             return 0;
           }
           return t-1;
@@ -11346,9 +11377,87 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                   📷 Or take a photo of your written answer
                 </button>
               )}
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}80`,textAlign:"center"}}>
-                Grading happens once you've answered every question — keep going.
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:`${T.muted}80`,textAlign:"center",marginBottom:isAnswered?14:0}}>
+                {isAnswered?"":"Type your answer, or attach a photo, to submit for grading."}
               </div>
+
+              {/* Immediate feedback flow — mirrors AI Tutor: submit -> see the
+                  result right here -> then move on. Replaces the old
+                  "grading happens once you've answered every question" batch
+                  message; each question is graded the moment it's submitted. */}
+              {gradedResults[q.id]?(()=>{
+                const graded=gradedResults[q.id];
+                const qColor=graded.totalAwarded>=graded.totalPossible*0.7?T.success:graded.totalAwarded>=graded.totalPossible*0.5?T.gold:T.danger;
+                return(
+                  <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}}
+                    style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"14px 16px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.1em"}}>
+                        {graded.fromCache?"YOUR RESULT (CACHED)":"YOUR RESULT"}
+                      </div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,fontWeight:700,color:qColor}}>{graded.totalAwarded}/{graded.totalPossible}</div>
+                    </div>
+                    {(graded.parts||[]).map(p=>(
+                      <div key={p.part} style={{marginBottom:8,padding:"8px 10px",background:"rgba(0,0,0,0.15)",borderRadius:7}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,fontWeight:700}}>{p.part==="main"?"ANSWER":`(${String(p.part).toUpperCase()})`}</span>
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>{p.awardedMarks}/{p.maxMarks}</span>
+                        </div>
+                        <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
+                      </div>
+                    ))}
+                    <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[q.id]||!followUpUsed[q.id]?8:0}}>{graded.overallFeedback}</div>
+                    {followUpText[q.id]?(
+                      <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:8,padding:"10px 12px"}}>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#60a5fa",letterSpacing:"0.1em",marginBottom:4}}>CLARIFICATION</div>
+                        <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{followUpText[q.id]}</div>
+                      </div>
+                    ):!followUpUsed[q.id]&&(
+                      <button onClick={()=>askFollowUp(q)} disabled={followUpLoading}
+                        style={{width:"100%",padding:"9px",borderRadius:8,border:"1px solid rgba(96,165,250,0.3)",
+                          background:"rgba(96,165,250,0.06)",color:"#60a5fa",cursor:followUpLoading?"wait":"pointer",
+                          fontSize:11,fontFamily:"'DM Mono',monospace"}}>
+                        {followUpLoading?"Asking…":"I still don't understand →"}
+                      </button>
+                    )}
+                    {/* Connects Theory grading back into the same learning
+                        ecosystem as AI Tutor — a student who just lost marks
+                        on a topic can go straight to full notes on it,
+                        instead of that being a dead end here. Lazy/collapsed
+                        until tapped, same as everywhere else it's used. */}
+                    {q.topic&&<TopicNotesButton user={user} subject={subject} topic={q.topic} T={T} onUpgrade={onUpgrade}/>}
+                  </motion.div>
+                );
+              })():aiError[q.id]?(
+                <div style={{background:"rgba(239,68,68,0.06)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:10,padding:"14px 16px",textAlign:"center"}}>
+                  <div style={{fontSize:12,color:"#f87171",marginBottom:10}}>
+                    {aiCreditsLeft<=0?"You're out of AI grading credits for now.":"Couldn't grade this one right now."}
+                  </div>
+                  {aiCreditsLeft>0&&(
+                    <button onClick={submitCurrentForGrading}
+                      style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${T.gold}55`,background:"transparent",
+                        color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                      Try again
+                    </button>
+                  )}
+                </div>
+              ):(
+                <button onClick={submitCurrentForGrading} disabled={!isAnswered||gradingCurrent}
+                  style={{width:"100%",padding:"14px",borderRadius:10,border:"none",
+                    background:(!isAnswered||gradingCurrent)?"rgba(184,151,62,0.2)":"linear-gradient(135deg,#004B3B 0%,#1B3A2A 50%,#8A6A1E 100%)",
+                    color:(!isAnswered||gradingCurrent)?"rgba(247,243,236,0.3)":"#F7F3EC",
+                    fontFamily:"'Playfair Display',serif",fontWeight:700,fontSize:15,
+                    cursor:(!isAnswered||gradingCurrent)?"not-allowed":"pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  {gradingCurrent?(
+                    <>
+                      <motion.div animate={{rotate:360}} transition={{duration:1,repeat:Infinity,ease:"linear"}}
+                        style={{width:14,height:14,border:"2px solid rgba(247,243,236,0.3)",borderTopColor:"#F7F3EC",borderRadius:"50%"}}/>
+                      Grading your answer…
+                    </>
+                  ):"Submit for AI Grading →"}
+                </button>
+              )}
             </div>
           ):(
           <>
@@ -11434,11 +11543,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
               color:canNext()?"#1a1209":"rgba(247,243,236,0.3)",
               fontWeight:700,fontSize:15,cursor:canNext()?"pointer":"not-allowed",
               fontFamily:"'DM Mono',monospace",letterSpacing:"0.04em"}}>
-            {idx<questions.length-1?"Next Question →":canUseAI?"Review All Answers →":"Finish & See Results →"}
+            {idx<questions.length-1?"Next Question →":"Finish & See Results →"}
           </button>
           {!canNext()&&(
             <div style={{textAlign:"center",fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,marginTop:8}}>
-              {canUseAI?"Type or photograph an answer to continue":"Mark all parts to continue"}
+              {canUseAI?"Submit this answer for grading to continue":"Mark all parts to continue"}
             </div>
           )}
         </div>

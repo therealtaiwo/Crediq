@@ -6740,6 +6740,7 @@ function AiTutorChatPanel({user,question,T,onBack}){
               border:`1px solid ${m.role==="user"?T.gold+"44":T.border}`,
               borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px",
               padding:"10px 13px"}}>
+              {m.role==="assistant"&&<ListenButton text={m.content} T={T}/>}
               {preprocessMathText(m.content).split("\n").filter(l=>l.trim()).map((l,li)=>(
                 <div key={li} style={{fontSize:12.5,lineHeight:1.6,color:T.text,marginBottom:3}}>{renderMathText(l,T)}</div>
               ))}

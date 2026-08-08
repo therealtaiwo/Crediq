@@ -6547,11 +6547,78 @@ function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc
 // just hands it a question object (real Firestore theoryQuestions shape) and
 // an onBack. Not cached (see sendAiTutorChatMessage) — every send is a real
 // Groq call, capped server-side at AI_TUTOR_CHAT_DAILY_CAP messages/day.
+// Splits a theory question into the same (A)/(B) + (i)/(ii)/(iii) structure
+// TheoryScreen already displays via SubQuestionText/parseRomanSubParts — just
+// flattened into groups here so each individual part can be made tappable
+// in Theory Chat, instead of only readable there. One group per subQuestion
+// (or one group total for a flat question with no subQuestions); each group
+// holds one or more items (roman sub-parts when present, else the whole
+// subQuestion as a single item).
+function getQuestionPartGroups(question){
+  const sqs=question.subQuestions||[];
+  if(sqs.length===0){
+    const text=theoryQuestionPreview(question);
+    if(!text)return[];
+    return[{label:"",marks:theoryQuestionMarks(question),items:[{badgeLabel:"",text,marks:null}]}];
+  }
+  return sqs.map(sq=>{
+    const partLabel=sq.part?`(${sq.part.toUpperCase()})`:"";
+    const romanParts=parseRomanSubParts(sq.text);
+    const items=romanParts
+      ?romanParts.map(rp=>({badgeLabel:rp.label,text:rp.content,marks:rp.marks}))
+      :[{badgeLabel:"",text:sq.text||"",marks:sq.marks}];
+    return{label:partLabel,marks:sq.marks,items};
+  });
+}
+// The tappable version of TheoryScreen's read-only question breakdown — same
+// (A)/(B) grouping and (i)/(ii)/(iii) rows, but every row is a button. Tapping
+// one calls onTapPart with a ready-made label ("(A)(I)") and that part's own
+// text, so the caller can ask about it immediately without the student typing.
+function QuestionPartsBreakdown({question,onTapPart,T}){
+  const groups=getQuestionPartGroups(question);
+  if(groups.length===0)return null;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {groups.map((g,gi)=>(
+        <div key={gi} style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"10px 12px"}}>
+          {g.label&&(
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>{g.label}</span>
+              {g.marks&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{g.marks} mark{g.marks==1?"":"s"}</span>}
+            </div>
+          )}
+          <div style={{display:"flex",flexDirection:"column"}}>
+            {g.items.map((item,ii)=>(
+              <button key={ii} onClick={()=>onTapPart(`${g.label}${item.badgeLabel}`.trim(),item.text)} className="btn-press"
+                style={{display:"flex",gap:8,alignItems:"flex-start",textAlign:"left",background:"none",border:"none",
+                  padding:"6px 4px",borderRadius:8,cursor:"pointer",width:"100%"}}>
+                {item.badgeLabel&&(
+                  <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:T.gold,flexShrink:0,minWidth:22,paddingTop:1}}>{item.badgeLabel}</span>
+                )}
+                <div style={{flex:1,fontSize:13,lineHeight:1.55,color:T.text}}>
+                  {renderMathText(item.text,T)}
+                  {item.marks&&(
+                    <span style={{marginLeft:8,fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,whiteSpace:"nowrap"}}>
+                      [{item.marks} mark{item.marks==1||item.marks==="1"?"":"s"}]
+                    </span>
+                  )}
+                </div>
+                <MessageCircle size={13} style={{flexShrink:0,marginTop:3,color:T.gold,opacity:0.55}}/>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AiTutorChatPanel({user,question,T,onBack}){
   const[messages,setMessages]=useState([]); // {role:"user"|"assistant",content}
   const[input,setInput]=useState("");
   const[sending,setSending]=useState(false);
   const[error,setError]=useState("");
+  const[qExpanded,setQExpanded]=useState(true); // full question breakdown starts open, collapses once the chat gets going
   const scrollRef=useRef(null);
 
   useEffect(()=>{
@@ -6578,10 +6645,18 @@ function AiTutorChatPanel({user,question,T,onBack}){
   const pinnedMarks=theoryQuestionMarks(question);
 
   const send=async()=>{
-    const text=input.trim();
-    if(!text||sending)return;
-    const nextMessages=[...messages,{role:"user",content:text}];
+    await sendMessage(input);
+  };
+
+  // Shared by the typed Send button AND by tapping a question part directly
+  // — same network call either way, so "Explain (A)(I)" tapped on the
+  // breakdown behaves exactly like the student typed it themselves.
+  const sendMessage=async(text)=>{
+    const trimmed=(text||"").trim();
+    if(!trimmed||sending)return;
+    const nextMessages=[...messages,{role:"user",content:trimmed}];
     setMessages(nextMessages);setInput("");setSending(true);setError("");
+    setQExpanded(false); // reclaim the screen for the conversation once it's actually started
     const result=await sendAiTutorChatMessage({user,messages:nextMessages,questionContext});
     setSending(false);
     if(result.text){
@@ -6595,17 +6670,31 @@ function AiTutorChatPanel({user,question,T,onBack}){
     }
   };
 
+  // Tapping a part on the breakdown asks about it directly — no typing.
+  const askAboutPart=(label,text)=>{
+    sendMessage(label?`Help me with ${label}: ${text}`:`Help me with this: ${text}`);
+  };
+
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100dvh - 160px)"}}>
       {/* Pinned question header — always visible so the student never loses
           track of what they're discussing. Uses theoryQuestionPreview, not
           question.question, for the same reason questionContext does above. */}
-      <div style={{padding:"12px 18px 14px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
-        <button onClick={onBack} className="btn-press"
-          style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
-            cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",gap:4,padding:0}}>
-          <ChevronLeft size={12}/> Change question
-        </button>
+      <div style={{padding:"12px 18px 14px",borderBottom:`1px solid ${T.border}`,background:T.surface,
+        maxHeight:qExpanded?"48vh":"none",overflowY:qExpanded?"auto":"visible"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <button onClick={onBack} className="btn-press"
+            style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
+              cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
+            <ChevronLeft size={12}/> Change question
+          </button>
+          <button onClick={()=>setQExpanded(e=>!e)} className="btn-press"
+            style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
+              cursor:"pointer",display:"flex",alignItems:"center",gap:4,padding:0}}>
+            {qExpanded?"Hide full question":"Show full question"}
+            <ChevronDown size={12} style={{transform:qExpanded?"rotate(180deg)":"none",transition:"transform .15s"}}/>
+          </button>
+        </div>
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
           <TopicChips topic={question.topic} T={T} max={2}/>
           {(question.year||question.paperNumber||pinnedMarks)&&(
@@ -6614,10 +6703,19 @@ function AiTutorChatPanel({user,question,T,onBack}){
             </span>
           )}
         </div>
-        <div style={{fontSize:12.5,color:T.text,lineHeight:1.55,fontWeight:600,
-          display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
-          {renderMathText(theoryQuestionPreview(question),T)}
-        </div>
+        {qExpanded?(
+          <>
+            <QuestionPartsBreakdown question={question} onTapPart={askAboutPart} T={T}/>
+            <div style={{fontSize:9.5,color:T.muted,fontStyle:"italic",marginTop:10}}>
+              Tap any part above to ask about it directly
+            </div>
+          </>
+        ):(
+          <div style={{fontSize:12.5,color:T.text,lineHeight:1.55,fontWeight:600,
+            display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+            {renderMathText(theoryQuestionPreview(question),T)}
+          </div>
+        )}
       </div>
 
       <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>

@@ -5908,6 +5908,29 @@ function MathBlock({latex}){
   if(html)return <div dangerouslySetInnerHTML={{__html:html}}/>;
   return <div style={{fontStyle:"italic",textAlign:"center"}}>{latex}</div>;
 }
+// Converts runs of Unicode superscript characters (the ones stored questions
+// and model answers actually use, e.g. "[MT⁻²]", "L²T⁻²", "s⁻¹") into real
+// KaTeX so they get typeset instead of showing as plain small-caps text.
+// Scoped tightly: only touches a contiguous cluster of letters/digits/
+// brackets that contains at least one superscript character, so ordinary
+// prose (footnote markers, stray unicode elsewhere) is never touched, and
+// existing LaTeX ($...$/\[...\]) is untouched since it contains no unicode
+// superscript characters in the first place — safe to run before those
+// delimiter conversions.
+const SUPERSCRIPT_MAP={"⁰":"0","¹":"1","²":"2","³":"3","⁴":"4","⁵":"5","⁶":"6","⁷":"7","⁸":"8","⁹":"9","⁻":"-","⁺":"+","ⁿ":"n","ⁱ":"i"};
+const SUPERSCRIPT_CHARS=Object.keys(SUPERSCRIPT_MAP).join("");
+function convertUnicodeSuperscripts(text){
+  if(!text)return text;
+  const supClass=`[${SUPERSCRIPT_CHARS}]`;
+  const spanRegex=new RegExp(`[A-Za-z0-9\\[\\]\\(\\)]*(?:${supClass}+[A-Za-z0-9\\[\\]\\(\\)]*)+`,"g");
+  return text.replace(spanRegex,span=>{
+    const converted=span.replace(new RegExp(`${supClass}+`,"g"),run=>{
+      const normalized=run.split("").map(ch=>SUPERSCRIPT_MAP[ch]).join("");
+      return `^{${normalized}}`;
+    });
+    return `$${converted}$`;
+  });
+}
 // Normalizes raw text before any math rendering happens:
 // 1. Collapses \[...\] (display) and \(...\) (inline) LaTeX delimiters into
 //    the $$...$$ / $...$ forms the renderer below understands. This runs on
@@ -5922,7 +5945,7 @@ function MathBlock({latex}){
 //    over a multi-letter span and show a tofu box instead.
 function preprocessMathText(text){
   if(!text)return text;
-  return text
+  return convertUnicodeSuperscripts(text)
     .replace(/\\\[([\s\S]*?)\\\]/g,(_,inner)=>`$$${inner.replace(/\s*\n\s*/g," ").trim()}$$`)
     .replace(/\\\(([\s\S]*?)\\\)/g,(_,inner)=>`$${inner.replace(/\s*\n\s*/g," ").trim()}$`)
     .replace(/([A-Za-z]{1,3})\u20D7/g,(_,letters)=>`$\\overrightarrow{${letters}}$`)

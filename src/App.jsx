@@ -10849,7 +10849,26 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   const[followUpUsed,setFollowUpUsed]=useState({});      // qId -> true, one follow-up only
   const[followUpText,setFollowUpText]=useState({});      // qId -> clarification string
   const[followUpLoading,setFollowUpLoading]=useState(false);
+  // "qId-part" -> true. Lets a student expand the real stored model answer
+  // per part underneath the AI's one-sentence verdict, addressing the
+  // "we're not walking through what we got wrong" feedback complaint without
+  // any backend/prompt change — the model answer was already sent to Gemini
+  // as the grading rubric (see gradeOneQuestion's `parts` build), just never
+  // shown back to the student. Collapsed by default, same lazy pattern as
+  // TopicNotesButton elsewhere on this screen.
+  const[expandedModelAnswer,setExpandedModelAnswer]=useState({});
   const fileInputRef=useRef(null);
+
+  // Looks up the actual stored model answer for a given graded part, so it
+  // can be shown to the student on demand. Mirrors the exact same lookup
+  // gradeOneQuestion already does when building the `parts` payload (see
+  // qn.subQuestions?.length fallback to the single qn.answer), so this stays
+  // in sync with whatever was actually graded.
+  const getModelAnswerForPart=(qn,part)=>{
+    const subParts=qn.subQuestions?.length?qn.subQuestions:[{part:"main",answer:qn.answer}];
+    const match=subParts.find(sq=>sq.part===part)||subParts[0];
+    return match?.answer||"";
+  };
 
   const YEARS=[2019,2020,2021,2022,2024,2025];
   const subjectList=user.subjects||[];
@@ -11490,6 +11509,28 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                           <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>{p.awardedMarks}/{p.maxMarks}</span>
                         </div>
                         <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
+                        {(()=>{
+                          const maKey=`${q.id}-${p.part}`;
+                          const modelAnswer=getModelAnswerForPart(q,p.part);
+                          if(!modelAnswer)return null;
+                          const maOpen=expandedModelAnswer[maKey];
+                          return(
+                            <div style={{marginTop:8}}>
+                              <button onClick={()=>setExpandedModelAnswer(prev=>({...prev,[maKey]:!prev[maKey]}))}
+                                style={{background:"none",border:"none",padding:0,cursor:"pointer",
+                                  fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",letterSpacing:"0.05em"}}>
+                                {maOpen?"▾ Hide full model answer":"▸ See full model answer"}
+                              </button>
+                              {maOpen&&(
+                                <div style={{marginTop:6,padding:"8px 10px",background:"rgba(96,165,250,0.06)",
+                                  border:"1px solid rgba(96,165,250,0.15)",borderRadius:7,fontSize:12,lineHeight:1.6,
+                                  color:T.text,whiteSpace:"pre-wrap"}}>
+                                  {modelAnswer}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                     <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[q.id]||!followUpUsed[q.id]?8:0}}>{graded.overallFeedback}</div>
@@ -11824,6 +11865,28 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                               <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>{p.awardedMarks}/{p.maxMarks}</span>
                             </div>
                             <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
+                            {(()=>{
+                              const maKey=`${qn.id}-${p.part}`;
+                              const modelAnswer=getModelAnswerForPart(qn,p.part);
+                              if(!modelAnswer)return null;
+                              const maOpen=expandedModelAnswer[maKey];
+                              return(
+                                <div style={{marginTop:8}}>
+                                  <button onClick={()=>setExpandedModelAnswer(prev=>({...prev,[maKey]:!prev[maKey]}))}
+                                    style={{background:"none",border:"none",padding:0,cursor:"pointer",
+                                      fontFamily:"'DM Mono',monospace",fontSize:9,color:"#60a5fa",letterSpacing:"0.05em"}}>
+                                    {maOpen?"▾ Hide full model answer":"▸ See full model answer"}
+                                  </button>
+                                  {maOpen&&(
+                                    <div style={{marginTop:6,padding:"8px 10px",background:"rgba(96,165,250,0.06)",
+                                      border:"1px solid rgba(96,165,250,0.15)",borderRadius:7,fontSize:12,lineHeight:1.6,
+                                      color:T.text,whiteSpace:"pre-wrap"}}>
+                                      {modelAnswer}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         ))}
                         <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[qn.id]||!followUpUsed[qn.id]?8:0}}>{graded.overallFeedback}</div>

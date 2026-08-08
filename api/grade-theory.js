@@ -84,6 +84,9 @@ OUTPUT — return ONLY this JSON structure. No markdown code fences, no commenta
 
 For questions with no sub-parts, return a single entry in "parts" using "part": "main".
 
+PART STRUCTURE — CRITICAL FOR CONSISTENCY:
+The "parts" array in your output MUST contain EXACTLY one entry per part given to you in the input below — matching those exact "part" labels, no more and no fewer. If a part's question text or model answer contains inline sub-items like (i), (ii), (iii), do NOT split that part into separate output entries for each sub-item — internally assess each sub-item's credit, then combine them into ONE score and ONE feedback sentence for that single part, up to that part's stated maxMarks. Never invent new "part" labels (e.g. "a(i)", "A-1") that were not present in the input. This ensures the same submitted answer always produces the same part structure across grading attempts.
+
 Set "weaknessDetected" to true if the student scored below 60% of available marks on this question, or if a genuine conceptual gap was evident — not for minor wording differences from the model answer.`;
 
 const FOLLOWUP_SYSTEM_PROMPT = `You are a JUPEB Theory tutor. A student was already graded on this question and is asking for one further clarification because they don't yet understand your feedback. Do NOT re-grade the answer or produce new marks — that has already happened. Only explain more clearly, in plain simple language, building directly on the feedback already given. Keep it to 2-4 sentences maximum.
@@ -236,6 +239,28 @@ export default async function handler(req, res) {
       console.error("Failed to parse AI JSON:", rawText);
       res.status(502).json({ error: "AI returned malformed response", fallbackToManual: true });
       return;
+    }
+
+    // Never trust the model's self-reported totalAwarded/totalPossible —
+    // LLMs are unreliable at summing their own per-part numbers (observed
+    // in production: a 6-part breakdown summing to 4 was reported as 3/10).
+    // Recompute both deterministically from the parts array it just gave us,
+    // so the displayed total can never drift from what the student actually
+    // sees per part. Skipped for follow-up responses, which have no "parts".
+    if (Array.isArray(parsed?.parts) && parsed.parts.length > 0) {
+      const computedAwarded = parsed.parts.reduce((sum, p) => sum + (Number(p.awardedMarks) || 0), 0);
+      const computedPossible = parsed.parts.reduce((sum, p) => sum + (Number(p.maxMarks) || 0), 0);
+      if (parsed.totalAwarded !== computedAwarded || parsed.totalPossible !== computedPossible) {
+        console.error(
+          "Theory grading total mismatch — AI reported",
+          `${parsed.totalAwarded}/${parsed.totalPossible}`,
+          "but parts summed to",
+          `${computedAwarded}/${computedPossible}`,
+          "— overriding with the computed value."
+        );
+      }
+      parsed.totalAwarded = computedAwarded;
+      parsed.totalPossible = computedPossible;
     }
 
     res.status(200).json(parsed);

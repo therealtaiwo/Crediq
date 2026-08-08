@@ -63,7 +63,14 @@ function extractRetryAfterSeconds(errText) {
 // Calls Groq with the primary model; on a 429 specifically, retries once with
 // the fallback model. Any other failure (400, 500, etc.) is returned as-is —
 // retrying with a different model won't fix a bad request or a Groq outage.
-async function callGroqWithFallback({ apiKey, systemPrompt, userPrompt, maxTokens, allowFallback }) {
+// `messages` (a full conversation history) takes precedence over `userPrompt`
+// when both are passed — added for Chat mode's multi-turn conversations;
+// every existing single-shot caller (Explain/Followup/Notes) is untouched
+// since they only ever pass userPrompt.
+async function callGroqWithFallback({ apiKey, systemPrompt, userPrompt, messages, maxTokens, allowFallback }) {
+  const conversation = messages && messages.length
+    ? [{ role: "system", content: systemPrompt }, ...messages]
+    : [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }];
   const callOnce = async model => fetch(GROQ_ENDPOINT, {
     method: "POST",
     headers: {
@@ -72,10 +79,7 @@ async function callGroqWithFallback({ apiKey, systemPrompt, userPrompt, maxToken
     },
     body: JSON.stringify({
       model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
+      messages: conversation,
       max_tokens: maxTokens,
     }),
   });
@@ -272,6 +276,34 @@ Rules:
 - Length is not capped by convention — write as long as the topic genuinely requires for full A-level depth. A narrow topic might reasonably run 800 words; a broad one might need 2500+. Match the length to what's actually needed, never to a habitual word count.
 - Don't pad with filler or repetition — every sentence should be doing real work. Depth means more real content, not more words saying the same thing.`;
 
+// Chat mode: freeform, multi-turn "ask me anything" scoped to JUPEB theory
+// prep — this is the one surface that behaves like a general chat assistant
+// rather than a single-shot generator, so the scoping instruction below is
+// load-bearing: without it, students will use their capped daily Groq budget
+// on essays, code debugging, or anything else, same voice as the rest of AI
+// Tutor (same warm second-person tutor), but this is the FIRST mode capable
+// of multi-turn back-and-forth, so it needs to actually track conversational
+// context itself, not just answer each message in isolation.
+const CHAT_SYSTEM_PROMPT = `You are a JUPEB tutor having a live, ongoing conversation with a student who is preparing for their exams — the same warm, direct, second-person tutor voice used throughout this app, not a generic AI assistant.
+
+SCOPE — this is the most important rule: only help with JUPEB academic subjects (the sciences, mathematics, and other subjects on the JUPEB syllabus). If the student asks for something clearly outside that — writing their essay for them, debugging unrelated code, general life advice, anything with no connection to their JUPEB subjects — gently redirect them back to their studies in one or two sentences, don't refuse coldly, and don't just comply either.
+
+CONVERSATION CONTEXT: you may be given a specific theory question the student currently has open (subject, topic, the question itself, and possibly their own answer and the model answer). When given, ground your responses in it — that's almost certainly what "it", "this", or "the question" refers to if the student doesn't restate it. When no question is given, the student can ask about anything within their JUPEB subjects, and you should ask what specifically they want to focus on if their message is too vague to answer well.
+
+MATH NOTATION — rendered with real LaTeX on the client, so use it for every piece of math, however small:
+- Wrap any standalone formula in $$...$$
+- Wrap inline math (a variable, a value, a short expression) in $...$
+- NEVER use \\[...\\] or \\(...\\) — only $$...$$ and $...$.
+- NEVER put a $ or $$ delimiter alone on its own line separate from the formula — opening delimiter, formula, and closing delimiter must all be on the SAME line.
+- Fractions: \\frac{a}{b}, never "a/b". Powers: x^{2} (braces for anything longer than one character). Subscripts: n_{f}. Square roots: \\sqrt{x}.
+- Greek letters and symbols: \\theta \\lambda \\pi \\mu \\omega \\Delta \\times \\div \\pm \\approx \\leq \\geq \\neq — never spelled out.
+
+Rules:
+- Answer ONLY what was actually asked in this turn — this is a conversation, not a fresh essay each time. Reference earlier turns naturally where relevant instead of re-explaining things already covered.
+- Keep answers proportional to the question — a quick clarifying question deserves a few sentences, not a full breakdown; a genuinely deep "explain this from scratch" deserves real depth.
+- No markdown headers like **Concept** — this is conversational, not a structured note.
+- If the student seems to be drifting off-topic within an otherwise real study session (e.g. a brief tangent), it's fine to engage briefly and steer back — reserve the explicit redirect for requests with no real connection to their studies at all.`;
+
 function sanitizeLatexDelimiters(text) {
   // Defense in depth: the model is instructed to only ever use $$...$$ / $...$,
   // but sometimes emits \[...\] / \(...\) anyway, which the client renderer
@@ -350,6 +382,18 @@ export default async function handler(req, res) {
   // this replaces.
   const AI_TUTOR_FREE_DAILY_CAP = 3;
   const AI_TUTOR_DAILY_CAP = 60;
+  // Chat mode's own cap, separate from the Explain/Followup counter above.
+  // Premium-only (no free tier at all — see the isPremium check in the chat
+  // block itself), and capped in MESSAGES not generations, since one long
+  // back-and-forth conversation can already cost as much in tokens as many
+  // separate Explain calls would.
+  const AI_TUTOR_CHAT_DAILY_CAP = 40;
+  // Bounds how much conversation history gets resent to Groq on every
+  // message — without this, a very long-running chat keeps growing its own
+  // input token cost turn after turn. 16 messages = roughly 8 back-and-forth
+  // exchanges of real context, which is enough for a focused study session;
+  // older turns just age out rather than the conversation being cut off.
+  const CHAT_HISTORY_LIMIT = 16;
 
   try {
     const body = req.body || {};
@@ -417,6 +461,91 @@ Write full JUPEB-level study notes on this topic.`;
       }
 
       res.status(200).json({ text: sanitizeLatexDelimiters(notesText) });
+      return;
+    }
+
+    // ── CHAT MODE — freeform, multi-turn "ask me anything", scoped to JUPEB
+    // theory prep. Premium-only and capped separately from Explain/Followup's
+    // shared counter (AI_TUTOR_CHAT_DAILY_CAP, in messages not generations) —
+    // a single long conversation here can already cost as much in tokens as
+    // many Explain calls, since the growing history is resent every message.
+    if (body.mode === "chat") {
+      if (!isPremium) {
+        res.status(403).json({ error: "Premium required for AI Tutor Chat" });
+        return;
+      }
+
+      const { messages, questionContext } = body;
+      if (!Array.isArray(messages) || messages.length === 0) {
+        res.status(400).json({ error: "Missing required field: messages" });
+        return;
+      }
+
+      // Only trust role/content shape from the client, and only user/
+      // assistant roles — never forward a client-supplied "system" role into
+      // the conversation, which would let a student override the system
+      // prompt (and the SCOPE rule inside it) entirely. Length-capped per
+      // message and history-capped overall, both to bound token growth.
+      const safeMessages = messages
+        .filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+        .slice(-CHAT_HISTORY_LIMIT)
+        .map(m => ({ role: m.role, content: m.content.trim().slice(0, 4000) }));
+
+      if (safeMessages.length === 0) {
+        res.status(400).json({ error: "No valid messages provided" });
+        return;
+      }
+
+      const chatTodayKey = new Date().toISOString().slice(0, 10);
+      const chatCounterKey = `chat_${decoded.uid}_${chatTodayKey}`;
+      const chatUsedToday = TEMP_inMemoryCounters.get(chatCounterKey) || 0;
+      if (chatUsedToday >= AI_TUTOR_CHAT_DAILY_CAP) {
+        res.status(429).json({ error: "Daily AI Tutor Chat limit reached" });
+        return;
+      }
+
+      // If the student has a specific theory question selected/open, ground
+      // the conversation in it — this is the "select a question" entry point
+      // into Chat mode. Kept out of the system prompt's static text (which
+      // never changes across a conversation) and appended per-request so the
+      // same handler still works fine with no question selected at all.
+      const contextLine = questionContext && questionContext.questionText
+        ? `The student has this specific theory question open right now — ground your answers in it whenever they say "it", "this", or "the question" without restating it:
+Subject: ${questionContext.subject || "N/A"}
+Topic: ${questionContext.topic || "N/A"}
+Question: ${questionContext.questionText}${questionContext.studentAnswer ? `\nStudent's own answer: ${questionContext.studentAnswer}` : ""}${questionContext.modelAnswer ? `\nModel answer: ${questionContext.modelAnswer}` : ""}`
+        : `No specific question is selected right now — the student can ask about anything within their JUPEB subjects.`;
+
+      const { res: chatRes, usedFallback: chatUsedFallback } = await callGroqWithFallback({
+        apiKey,
+        systemPrompt: `${CHAT_SYSTEM_PROMPT}\n\n${contextLine}`,
+        messages: safeMessages,
+        maxTokens: 900,
+        allowFallback: true,
+      });
+
+      if (!chatRes.ok) {
+        const errText = await chatRes.text().catch(() => "");
+        console.error("Groq API error (chat):", chatRes.status, errText);
+        res.status(chatRes.status === 429 ? 429 : 502).json({
+          error: "AI Tutor Chat unavailable right now",
+          retryAfterSeconds: chatRes.status === 429 ? extractRetryAfterSeconds(errText) : null,
+        });
+        return;
+      }
+
+      const chatData = await chatRes.json();
+      const chatAnswer = chatData?.choices?.[0]?.message?.content;
+      if (chatUsedFallback) console.warn(`Chat served by fallback model (${FALLBACK_MODEL}) for uid ${decoded.uid}`);
+
+      if (!chatAnswer) {
+        res.status(502).json({ error: "Empty AI response" });
+        return;
+      }
+
+      TEMP_inMemoryCounters.set(chatCounterKey, chatUsedToday + 1);
+
+      res.status(200).json({ answer: sanitizeLatexDelimiters(chatAnswer) });
       return;
     }
 

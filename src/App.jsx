@@ -6614,6 +6614,10 @@ function QuestionPartsBreakdown({question,onTapPart,T}){
 }
 
 function AiTutorChatPanel({user,question,T,onBack}){
+  useKatexReady(); // kicks off the KaTeX CDN load on mount (same as AiTutorFormattedText/TheoryScreen) —
+  // without this, math in the AI's replies here silently stays in the raw-LaTeX
+  // italic fallback forever if the student hasn't visited a screen that already
+  // triggered the load, which is exactly the "\text{cm} \div 10" text bug.
   const[messages,setMessages]=useState([]); // {role:"user"|"assistant",content}
   const[input,setInput]=useState("");
   const[sending,setSending]=useState(false);
@@ -6676,7 +6680,7 @@ function AiTutorChatPanel({user,question,T,onBack}){
   };
 
   return(
-    <div style={{display:"flex",flexDirection:"column",height:"calc(100dvh - 160px)"}}>
+    <div style={{display:"flex",flexDirection:"column",height:"100dvh",background:T.bg,color:T.text}}>
       {/* Pinned question header — always visible so the student never loses
           track of what they're discussing. Uses theoryQuestionPreview, not
           question.question, for the same reason questionContext does above. */}
@@ -6759,7 +6763,7 @@ function AiTutorChatPanel({user,question,T,onBack}){
         {error&&<div style={{alignSelf:"center",fontSize:11,color:"#f87171",textAlign:"center"}}>{error}</div>}
       </div>
 
-      <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:8,alignItems:"center"}}>
+      <div style={{padding:"12px 18px",paddingBottom:"calc(12px + env(safe-area-inset-bottom,0px))",borderTop:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:8,alignItems:"center"}}>
         <input value={input} onChange={e=>setInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
           placeholder="Ask about this question…" disabled={sending}
@@ -7715,7 +7719,12 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
         )}
 
         {tutorMode==="theory"&&user.isPremium&&selectedChatQuestion&&(
-          <AiTutorChatPanel user={user} question={selectedChatQuestion} T={T} onBack={()=>setSelectedChatQuestion(null)}/>
+          <AnimatePresence>
+            <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}}
+              style={{position:"fixed",inset:0,zIndex:200,background:T.bg}}>
+              <AiTutorChatPanel user={user} question={selectedChatQuestion} T={T} onBack={()=>setSelectedChatQuestion(null)}/>
+            </motion.div>
+          </AnimatePresence>
         )}
 
         <AnimatePresence>{showFormulaBank&&(

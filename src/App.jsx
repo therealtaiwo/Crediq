@@ -6566,10 +6566,16 @@ function AiTutorChatPanel({user,question,T,onBack}){
   const questionContext={
     subject:question.subject||"",
     topic:question.topic||"",
-    questionText:question.question||"",
+    // theoryQuestionPreview applies the same subQuestions-vs-question
+    // fallback TheoryScreen uses — some docs store only a bare course/unit
+    // header in `question` (see the comment on that function), so reading
+    // it raw here would hand the model a header instead of the real
+    // question text.
+    questionText:theoryQuestionPreview(question),
     modelAnswer:(question.subQuestions?.length?question.subQuestions:[{part:"main",text:question.question||"",answer:question.answer||""}])
       .map(sq=>`(${(sq.part||"").toUpperCase()}) ${sq.text||""}${sq.answer?` — ${sq.answer}`:""}`).join("\n"),
   };
+  const pinnedMarks=theoryQuestionMarks(question);
 
   const send=async()=>{
     const text=input.trim();
@@ -6591,43 +6597,85 @@ function AiTutorChatPanel({user,question,T,onBack}){
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100dvh - 160px)"}}>
-      <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
+      {/* Pinned question header — always visible so the student never loses
+          track of what they're discussing. Uses theoryQuestionPreview, not
+          question.question, for the same reason questionContext does above. */}
+      <div style={{padding:"12px 18px 14px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
         <button onClick={onBack} className="btn-press"
           style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
-            cursor:"pointer",marginBottom:6,display:"flex",alignItems:"center",gap:4,padding:0}}>
+            cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",gap:4,padding:0}}>
           <ChevronLeft size={12}/> Change question
         </button>
-        <div style={{fontSize:12,color:T.text,lineHeight:1.5,fontWeight:600}}>{renderMathText(question.question,T)}</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
+          {question.topic&&(
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.06em",
+              background:"rgba(184,151,62,0.1)",border:"1px solid rgba(184,151,62,0.25)",borderRadius:10,padding:"2px 8px"}}>
+              {question.topic.toUpperCase()}
+            </span>
+          )}
+          {(question.year||question.paperNumber||pinnedMarks)&&(
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>
+              {question.year||""}{question.paperNumber?` · Paper ${question.paperNumber}`:""}{pinnedMarks?` · ${pinnedMarks} marks`:""}
+            </span>
+          )}
+        </div>
+        <div style={{fontSize:12.5,color:T.text,lineHeight:1.55,fontWeight:600,
+          display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+          {renderMathText(theoryQuestionPreview(question),T)}
+        </div>
       </div>
 
-      <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:12}}>
+      <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"16px 18px",display:"flex",flexDirection:"column",gap:14}}>
         {messages.length===0&&(
-          <div style={{fontSize:12,color:T.muted,fontStyle:"italic",textAlign:"center",marginTop:20}}>
+          <div style={{fontSize:12,color:T.muted,fontStyle:"italic",textAlign:"center",marginTop:24,lineHeight:1.6}}>
             Ask anything about this question — the difference between two parts, why a step works, a different way to approach it, whatever you need.
           </div>
         )}
         {messages.map((m,i)=>(
-          <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",
-            background:m.role==="user"?`${T.gold}22`:T.surface,border:`1px solid ${m.role==="user"?T.gold+"44":T.border}`,
-            borderRadius:12,padding:"10px 12px"}}>
-            {preprocessMathText(m.content).split("\n").filter(l=>l.trim()).map((l,li)=>(
-              <div key={li} style={{fontSize:12,lineHeight:1.6,color:T.text,marginBottom:3}}>{renderMathText(l,T)}</div>
-            ))}
+          <div key={i} style={{display:"flex",flexDirection:"column",alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%"}}>
+            {m.role==="assistant"&&(
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8.5,fontWeight:700,letterSpacing:"0.1em",color:T.gold,marginBottom:4,marginLeft:2}}>
+                AI TUTOR
+              </div>
+            )}
+            <div style={{
+              background:m.role==="user"?`${T.gold}22`:T.surface,
+              border:`1px solid ${m.role==="user"?T.gold+"44":T.border}`,
+              borderRadius:m.role==="user"?"14px 14px 3px 14px":"14px 14px 14px 3px",
+              padding:"10px 13px"}}>
+              {preprocessMathText(m.content).split("\n").filter(l=>l.trim()).map((l,li)=>(
+                <div key={li} style={{fontSize:12.5,lineHeight:1.6,color:T.text,marginBottom:3}}>{renderMathText(l,T)}</div>
+              ))}
+            </div>
           </div>
         ))}
-        {sending&&<div style={{alignSelf:"flex-start",fontSize:11,color:T.muted,fontStyle:"italic"}}>Thinking…</div>}
-        {error&&<div style={{alignSelf:"center",fontSize:11,color:"#f87171"}}>{error}</div>}
+        {sending&&(
+          <div style={{display:"flex",flexDirection:"column",alignSelf:"flex-start",maxWidth:"85%"}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8.5,fontWeight:700,letterSpacing:"0.1em",color:T.gold,marginBottom:4,marginLeft:2}}>
+              AI TUTOR
+            </div>
+            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"14px 14px 14px 3px",
+              padding:"12px 14px",display:"flex",gap:4,alignItems:"center"}}>
+              {[0,1,2].map(i=>(
+                <span key={i} style={{width:5,height:5,borderRadius:"50%",background:T.gold,
+                  animation:`blink 1s ease-in-out ${i*0.18}s infinite`}}/>
+              ))}
+            </div>
+          </div>
+        )}
+        {error&&<div style={{alignSelf:"center",fontSize:11,color:"#f87171",textAlign:"center"}}>{error}</div>}
       </div>
 
-      <div style={{padding:"10px 18px",borderTop:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:8}}>
+      <div style={{padding:"12px 18px",borderTop:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:8,alignItems:"center"}}>
         <input value={input} onChange={e=>setInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
           placeholder="Ask about this question…" disabled={sending}
-          style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.text,fontSize:12}}/>
+          style={{flex:1,padding:"11px 14px",borderRadius:22,border:`1px solid ${T.border}`,background:T.bg,color:T.text,fontSize:12.5,outline:"none"}}/>
         <button onClick={send} disabled={sending||!input.trim()} className="btn-press"
-          style={{padding:"10px 16px",borderRadius:8,border:"none",background:T.gold,color:"#1B1B1B",
-            fontWeight:700,cursor:sending||!input.trim()?"default":"pointer",opacity:sending||!input.trim()?0.5:1}}>
-          Send
+          style={{padding:"11px 18px",borderRadius:22,border:"none",background:T.gold,color:"#1B1B1B",
+            fontFamily:"'DM Mono',monospace",fontSize:11,letterSpacing:"0.04em",
+            fontWeight:700,cursor:sending||!input.trim()?"default":"pointer",opacity:sending||!input.trim()?0.5:1,flexShrink:0}}>
+          {sending?"…":"Send"}
         </button>
       </div>
     </div>
@@ -7223,6 +7271,81 @@ function ReferenceBankScreen({user,onBack,dark,setDark,T}){
   );
 }
 
+// ─── THEORY QUESTION PREVIEW HELPERS (Theory Chat picker + pinned header) ──
+// Mirrors the exact fallback TheoryScreen already uses (see its "Question
+// text — only when flat" comment, ~line 11656): many theoryQuestions docs
+// store a bare course/unit header in `question` (e.g. "PHY 003: ELECTRICITY
+// AND MAGNETISM") and keep the real content in subQuestions[].text. Reading
+// `question` unconditionally — which the old chat picker and pinned header
+// both did — is what surfaced those headers as "questions" on screen. Same
+// data, same fallback TheoryScreen already trusts; just applied here too.
+function theoryQuestionPreview(q){
+  if(!q)return"";
+  const sqs=q.subQuestions||[];
+  if(sqs.length>0){
+    const joined=sqs.map(sq=>sq.text).filter(Boolean).join(" ").trim();
+    if(joined)return joined;
+  }
+  return(q.question||"").trim();
+}
+function theoryQuestionMarks(q){
+  if(!q)return null;
+  if(q.totalMarks)return q.totalMarks;
+  const sqs=q.subQuestions||[];
+  if(sqs.length>0){
+    const sum=sqs.reduce((s,sq)=>s+(Number(sq.marks)||0),0);
+    return sum||null;
+  }
+  return null;
+}
+function groupTheoryQuestionsByYear(questions){
+  const groups={};
+  questions.forEach(q=>{
+    const y=q.year||"Other";
+    (groups[y]=groups[y]||[]).push(q);
+  });
+  return Object.keys(groups).sort((a,b)=>(b==="Other"?-1:a==="Other"?1:b-a)).map(y=>({year:y,items:groups[y]}));
+}
+// One tappable past-question card — tap opens Theory Chat with that question
+// already selected, no intermediate step. Visual language matches the rest
+// of Crediq (surface/border/gold from the theme) rather than a generic list row.
+function TheoryQuestionCard({q,onSelect,T}){
+  const preview=theoryQuestionPreview(q)||"(question text unavailable)";
+  const marks=theoryQuestionMarks(q);
+  return(
+    <button onClick={()=>onSelect(q)} className="btn-press"
+      style={{textAlign:"left",width:"100%",padding:"14px 16px",borderRadius:12,
+        border:`1px solid ${T.border}`,background:T.surface,cursor:"pointer",
+        display:"flex",flexDirection:"column",gap:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          {q.topic&&(
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,letterSpacing:"0.06em",
+              background:"rgba(184,151,62,0.1)",border:"1px solid rgba(184,151,62,0.25)",borderRadius:10,padding:"2px 8px"}}>
+              {q.topic.toUpperCase()}
+            </span>
+          )}
+          {q.paperNumber&&(
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>Paper {q.paperNumber}</span>
+          )}
+        </div>
+        {marks&&(
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,whiteSpace:"nowrap",flexShrink:0}}>
+            {marks} mark{marks===1?"":"s"}
+          </span>
+        )}
+      </div>
+      <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+        <div style={{flex:1,fontSize:13,lineHeight:1.55,color:T.text,
+          display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+          {preview}
+        </div>
+        <ChevronRight size={16} style={{flexShrink:0,marginTop:2,color:T.gold,opacity:0.75}}/>
+      </div>
+    </button>
+  );
+}
+
 function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onResumeConsumed}) {
   const userSubjects=user.subjects||[];
   const[selSub,setSelSub]=useState(userSubjects[0]||"");
@@ -7439,15 +7562,38 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
               </BtnPrimary>
             )}
             {theoryQErr&&<div style={{marginTop:10,fontSize:11,color:"#f87171"}}>{theoryQErr}</div>}
-            {theoryQuestions.length>0&&(
-              <div style={{marginTop:18,display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em"}}>PICK A QUESTION TO CHAT ABOUT</div>
-                {theoryQuestions.map(q=>(
-                  <button key={q.id} className="btn-press" onClick={()=>setSelectedChatQuestion(q)}
-                    style={{textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,cursor:"pointer"}}>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,marginBottom:4}}>{q.year||""}{q.topic?` · ${q.topic}`:""}</div>
-                    <div style={{fontSize:12,color:T.text,lineHeight:1.5,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{q.question||"(untitled question)"}</div>
-                  </button>
+            {theoryQLoading&&(
+              <div style={{marginTop:18,display:"flex",flexDirection:"column",gap:10}}>
+                {[0,1,2].map(i=>(
+                  <div key={i} style={{height:74,borderRadius:12,border:`1px solid ${T.border}`,
+                    background:`linear-gradient(90deg,${T.surface} 25%,${T.surface2} 37%,${T.surface} 63%)`,
+                    backgroundSize:"400% 100%",animation:"shimmer 1.8s infinite linear"}}/>
+                ))}
+              </div>
+            )}
+            {!theoryQLoading&&theoryQuestions.length>0&&(
+              <div style={{marginTop:20}}>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:4}}>
+                  PICK A PAST QUESTION TO CHAT ABOUT
+                </div>
+                <div style={{fontSize:11,color:T.muted,marginBottom:16}}>
+                  {theoryQuestions.length} question{theoryQuestions.length===1?"":"s"} · tap any one to open Theory Chat
+                </div>
+                {groupTheoryQuestionsByYear(theoryQuestions).map(group=>(
+                  <div key={group.year} style={{marginBottom:22}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                      <span style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,color:T.gold}}>{group.year}</span>
+                      <div style={{flex:1,height:1,background:T.border}}/>
+                      <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>
+                        {group.items.length} question{group.items.length===1?"":"s"}
+                      </span>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {group.items.map(q=>(
+                        <TheoryQuestionCard key={q.id} q={q} onSelect={setSelectedChatQuestion} T={T}/>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}

@@ -11508,7 +11508,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                           <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,fontWeight:700}}>{p.part==="main"?"ANSWER":`(${String(p.part).toUpperCase()})`}</span>
                           <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>{p.awardedMarks}/{p.maxMarks}</span>
                         </div>
-                        <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
+                        <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{renderMathText(p.feedback,T)}</div>
                         {(()=>{
                           const maKey=`${q.id}-${p.part}`;
                           const modelAnswer=getModelAnswerForPart(q,p.part);
@@ -11523,9 +11523,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                               </button>
                               {maOpen&&(
                                 <div style={{marginTop:6,padding:"8px 10px",background:"rgba(96,165,250,0.06)",
-                                  border:"1px solid rgba(96,165,250,0.15)",borderRadius:7,fontSize:12,lineHeight:1.6,
-                                  color:T.text,whiteSpace:"pre-wrap"}}>
-                                  {modelAnswer}
+                                  border:"1px solid rgba(96,165,250,0.15)",borderRadius:7,fontSize:12,
+                                  color:T.text}}>
+                                  {preprocessMathText(modelAnswer).split("\n").filter(l=>l.trim()).map((l,i)=>(
+                                    <div key={i} style={{lineHeight:1.6,marginBottom:3}}>{renderMathText(l,T)}</div>
+                                  ))}
                                 </div>
                               )}
                             </div>
@@ -11533,11 +11535,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                         })()}
                       </div>
                     ))}
-                    <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[q.id]||!followUpUsed[q.id]?8:0}}>{graded.overallFeedback}</div>
+                    <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[q.id]||!followUpUsed[q.id]?8:0}}>{renderMathText(graded.overallFeedback,T)}</div>
                     {followUpText[q.id]?(
                       <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:8,padding:"10px 12px"}}>
                         <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#60a5fa",letterSpacing:"0.1em",marginBottom:4}}>CLARIFICATION</div>
-                        <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{followUpText[q.id]}</div>
+                        <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{renderMathText(followUpText[q.id],T)}</div>
                       </div>
                     ):!followUpUsed[q.id]&&(
                       <button onClick={()=>askFollowUp(q)} disabled={followUpLoading}
@@ -11864,7 +11866,7 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                               <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,fontWeight:700}}>{p.part==="main"?"ANSWER":`(${String(p.part).toUpperCase()})`}</span>
                               <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:p.awardedMarks>=p.maxMarks*0.6?T.success:"#f59e0b"}}>{p.awardedMarks}/{p.maxMarks}</span>
                             </div>
-                            <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{p.feedback}</div>
+                            <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{renderMathText(p.feedback,T)}</div>
                             {(()=>{
                               const maKey=`${qn.id}-${p.part}`;
                               const modelAnswer=getModelAnswerForPart(qn,p.part);
@@ -11879,9 +11881,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                                   </button>
                                   {maOpen&&(
                                     <div style={{marginTop:6,padding:"8px 10px",background:"rgba(96,165,250,0.06)",
-                                      border:"1px solid rgba(96,165,250,0.15)",borderRadius:7,fontSize:12,lineHeight:1.6,
-                                      color:T.text,whiteSpace:"pre-wrap"}}>
-                                      {modelAnswer}
+                                      border:"1px solid rgba(96,165,250,0.15)",borderRadius:7,fontSize:12,
+                                      color:T.text}}>
+                                      {preprocessMathText(modelAnswer).split("\n").filter(l=>l.trim()).map((l,i)=>(
+                                        <div key={i} style={{lineHeight:1.6,marginBottom:3}}>{renderMathText(l,T)}</div>
+                                      ))}
                                     </div>
                                   )}
                                 </div>
@@ -11889,11 +11893,11 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
                             })()}
                           </div>
                         ))}
-                        <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[qn.id]||!followUpUsed[qn.id]?8:0}}>{graded.overallFeedback}</div>
+                        <div style={{fontSize:12,lineHeight:1.6,color:T.muted,fontStyle:"italic",marginBottom:followUpText[qn.id]||!followUpUsed[qn.id]?8:0}}>{renderMathText(graded.overallFeedback,T)}</div>
                         {followUpText[qn.id]?(
                           <div style={{background:"rgba(96,165,250,0.06)",border:"1px solid rgba(96,165,250,0.2)",borderRadius:8,padding:"10px 12px"}}>
                             <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#60a5fa",letterSpacing:"0.1em",marginBottom:4}}>CLARIFICATION</div>
-                            <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{followUpText[qn.id]}</div>
+                            <div style={{fontSize:12,lineHeight:1.6,color:T.text}}>{renderMathText(followUpText[qn.id],T)}</div>
                           </div>
                         ):!followUpUsed[qn.id]&&(
                           <button onClick={()=>askFollowUp(qn)} disabled={followUpLoading}

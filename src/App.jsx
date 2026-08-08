@@ -10835,6 +10835,13 @@ const theorySubjectMeta=s=>THEORY_SUBJECT_META[s]||{icon:BookOpen,blurb:"Past JU
 
 // ─── THEORY SCREEN ────────────────────────────────────────────────────────────
 function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
+  // Kicks off the KaTeX CDN load on mount (same as ReferenceBankScreen/AI
+  // Tutor) and re-renders once it's ready. Without this, MathBlock/MathInline
+  // silently fall back to italic raw-LaTeX text (e.g. "MT^{-2}" instead of a
+  // typeset superscript) whenever a student lands on Theory grading before
+  // ever visiting a screen that already triggers the KaTeX load — which is
+  // exactly what the italic "^{-2}"-style text in grading feedback was.
+  useKatexReady();
   const[phase,setPhase]=useState("setup");
   const[subject,setSubject]=useState(user.subjects?.[0]||"");
   const[year,setYear]=useState("all");

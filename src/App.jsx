@@ -5830,6 +5830,47 @@ async function getTopicNotes({user,subject,topic,courseCode:explicitCourseCode,c
   return{text:data.text,cached:false};
 }
 
+// Freeform, multi-turn AI Tutor Chat — the client side of ai-tutor.js's
+// "chat" mode. Deliberately NOT cached (see the mode:"chat" comment
+// server-side: no two conversations repeat verbatim, so caching buys
+// nothing here, unlike Notes' per-topic cache). Same 429-retry-once pattern
+// as getTopicNotes for consistency, since this hits the same rate-limited
+// Groq models. `messages` is the full running conversation the caller
+// already has in state — this function doesn't own conversation state
+// itself, it just sends one turn and returns the reply.
+async function sendAiTutorChatMessage({user,messages,questionContext}){
+  if(!user?.isPremium)return{blocked:"premium-required"};
+
+  const doFetch=async()=>{
+    const token=await auth.currentUser.getIdToken();
+    return fetch("/api/ai-tutor",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+      body:JSON.stringify({mode:"chat",messages,questionContext:questionContext||null}),
+    });
+  };
+
+  let res;
+  try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+
+  if(res.status===429){
+    let retryAfter=null;
+    try{retryAfter=(await res.json())?.retryAfterSeconds;}catch{}
+    if(retryAfter&&retryAfter>0&&retryAfter<=20){
+      await new Promise(r=>setTimeout(r,retryAfter*1000+300));
+      try{res=await doFetch();}catch(err){return{blocked:"network-error"};}
+    }
+  }
+
+  if(res.status===429)return{blocked:"rate-limited"};
+  if(res.status===403)return{blocked:"premium-required"};
+  if(!res.ok)return{blocked:"generation-failed"};
+
+  const data=await res.json();
+  if(!data.answer)return{blocked:"generation-failed"};
+  return{text:data.answer};
+}
+
 // Lightweight renderer for AI Tutor output — handles **bold** headers and
 // inline **bold**, real paragraph spacing. No markdown library dependency;
 // just enough to stop raw ** characters from showing to students.
@@ -6500,6 +6541,99 @@ function TopicNotesButton({user,subject,topic,T,courseCode,courseName,courseDesc
   );
 }
 
+// ─── AI TUTOR CHAT PANEL ──────────────────────────────────────────────────────
+// Freeform, multi-turn chat grounded in one theory question — the "Theory"
+// entry point inside AI Tutor. Owns its own conversation state; the caller
+// just hands it a question object (real Firestore theoryQuestions shape) and
+// an onBack. Not cached (see sendAiTutorChatMessage) — every send is a real
+// Groq call, capped server-side at AI_TUTOR_CHAT_DAILY_CAP messages/day.
+function AiTutorChatPanel({user,question,T,onBack}){
+  const[messages,setMessages]=useState([]); // {role:"user"|"assistant",content}
+  const[input,setInput]=useState("");
+  const[sending,setSending]=useState(false);
+  const[error,setError]=useState("");
+  const scrollRef=useRef(null);
+
+  useEffect(()=>{
+    scrollRef.current?.scrollTo({top:scrollRef.current.scrollHeight,behavior:"smooth"});
+  },[messages,sending]);
+
+  // Built once per selected question, not per message — the model is told to
+  // treat this as the standing context for the whole conversation. Mirrors
+  // the exact same subQuestions fallback grade-theory.js and getModelAnswerForPart
+  // already use, so the "model answer" text sent here matches what the
+  // student can already see elsewhere for this same question.
+  const questionContext={
+    subject:question.subject||"",
+    topic:question.topic||"",
+    questionText:question.question||"",
+    modelAnswer:(question.subQuestions?.length?question.subQuestions:[{part:"main",text:question.question||"",answer:question.answer||""}])
+      .map(sq=>`(${(sq.part||"").toUpperCase()}) ${sq.text||""}${sq.answer?` — ${sq.answer}`:""}`).join("\n"),
+  };
+
+  const send=async()=>{
+    const text=input.trim();
+    if(!text||sending)return;
+    const nextMessages=[...messages,{role:"user",content:text}];
+    setMessages(nextMessages);setInput("");setSending(true);setError("");
+    const result=await sendAiTutorChatMessage({user,messages:nextMessages,questionContext});
+    setSending(false);
+    if(result.text){
+      setMessages(m=>[...m,{role:"assistant",content:result.text}]);
+    }else if(result.blocked==="rate-limited"){
+      setError("You've hit today's Chat limit — try again tomorrow.");
+    }else if(result.blocked==="premium-required"){
+      setError("AI Tutor Chat is a Premium feature.");
+    }else{
+      setError("Couldn't get a response — try again.");
+    }
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100dvh - 160px)"}}>
+      <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`,background:T.surface}}>
+        <button onClick={onBack} className="btn-press"
+          style={{background:"none",border:"none",color:T.gold,fontFamily:"'DM Mono',monospace",fontSize:10,
+            cursor:"pointer",marginBottom:6,display:"flex",alignItems:"center",gap:4,padding:0}}>
+          <ChevronLeft size={12}/> Change question
+        </button>
+        <div style={{fontSize:12,color:T.text,lineHeight:1.5,fontWeight:600}}>{renderMathText(question.question,T)}</div>
+      </div>
+
+      <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"14px 18px",display:"flex",flexDirection:"column",gap:12}}>
+        {messages.length===0&&(
+          <div style={{fontSize:12,color:T.muted,fontStyle:"italic",textAlign:"center",marginTop:20}}>
+            Ask anything about this question — the difference between two parts, why a step works, a different way to approach it, whatever you need.
+          </div>
+        )}
+        {messages.map((m,i)=>(
+          <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%",
+            background:m.role==="user"?`${T.gold}22`:T.surface,border:`1px solid ${m.role==="user"?T.gold+"44":T.border}`,
+            borderRadius:12,padding:"10px 12px"}}>
+            {preprocessMathText(m.content).split("\n").filter(l=>l.trim()).map((l,li)=>(
+              <div key={li} style={{fontSize:12,lineHeight:1.6,color:T.text,marginBottom:3}}>{renderMathText(l,T)}</div>
+            ))}
+          </div>
+        ))}
+        {sending&&<div style={{alignSelf:"flex-start",fontSize:11,color:T.muted,fontStyle:"italic"}}>Thinking…</div>}
+        {error&&<div style={{alignSelf:"center",fontSize:11,color:"#f87171"}}>{error}</div>}
+      </div>
+
+      <div style={{padding:"10px 18px",borderTop:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:8}}>
+        <input value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
+          placeholder="Ask about this question…" disabled={sending}
+          style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:T.bg,color:T.text,fontSize:12}}/>
+        <button onClick={send} disabled={sending||!input.trim()} className="btn-press"
+          style={{padding:"10px 16px",borderRadius:8,border:"none",background:T.gold,color:"#1B1B1B",
+            fontWeight:700,cursor:sending||!input.trim()?"default":"pointer",opacity:sending||!input.trim()?0.5:1}}>
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── DRILL SCREEN ─────────────────────────────────────────────────────────────
 function DrillScreen({user,history,QB,onEnd,onBack,dark,setDark,T,showToast,onUpgrade,resumeSession,onResumeConsumed}) {
   const weakTopics=useMemo(()=>calcWeakTopics(history),[history]);
@@ -7098,6 +7232,17 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
   const[revealed,setRevealed]=useState(false);
   const[showReport,setShowReport]=useState(false);
   const[showCalc,setShowCalc]=useState(false);
+  // "mcq" = existing objective-question tutor (unchanged below). "theory" =
+  // the new freeform Chat entry point: pick a subject, pick a theory
+  // question, then chat about it via AiTutorChatPanel. Kept as a top-level
+  // toggle in the setup screen only — once an MCQ session or a chat
+  // question is chosen, this has already done its job.
+  const[tutorMode,setTutorMode]=useState("mcq");
+  const[theorySubject,setTheorySubject]=useState(userSubjects[0]||"");
+  const[theoryQuestions,setTheoryQuestions]=useState([]);
+  const[theoryQLoading,setTheoryQLoading]=useState(false);
+  const[theoryQErr,setTheoryQErr]=useState("");
+  const[selectedChatQuestion,setSelectedChatQuestion]=useState(null);
   // Notes and Formula Bank open as overlays ON TOP of the tutor session
   // (not via the top-level screen router) so closing them lands you right
   // back on the same question — no state lost, no trip through Dashboard.
@@ -7160,6 +7305,25 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
     setSession(shuffled);setIdx(0);setSelectedOpt(null);setRevealed(false);
   };
 
+  // Loads a lightweight, unfiltered batch of this subject's theory questions
+  // for the chat picker — same Firestore collection TheoryScreen uses, but
+  // deliberately without its year/paper filters or KNOWN_BROKEN_THEORY_IDS
+  // exclusion list: this is browse-to-chat, not a scored session, so a
+  // stale/broken question here is just a bad pick a student scrolls past,
+  // not a mark-affecting problem the way it would be in a real Theory run.
+  const loadTheoryQuestionsForChat=async()=>{
+    if(!theorySubject){setTheoryQErr("Select a subject first");return;}
+    setTheoryQLoading(true);setTheoryQErr("");setTheoryQuestions([]);
+    try{
+      const snap=await getDocs(query(collection(db,"theoryQuestions"),
+        where("examType","==","THEORY"),where("subject","==",theorySubject),limit(100)));
+      const qs=snap.docs.map(d=>({id:d.id,...d.data()}));
+      if(!qs.length)setTheoryQErr("No theory questions found for this subject.");
+      setTheoryQuestions(qs);
+    }catch(err){setTheoryQErr("Couldn't load questions — try again.");}
+    setTheoryQLoading(false);
+  };
+
   const pickOption=letter=>{
     if(revealed)return;
     setSelectedOpt(letter);setRevealed(true);
@@ -7199,6 +7363,24 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
           </div>
         )}
 
+        <div style={{padding:"14px 18px 0",maxWidth:1000,margin:"0 auto",width:"100%"}}>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>{setTutorMode("mcq");setSelectedChatQuestion(null);}} className="btn-press"
+              style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${tutorMode==="mcq"?T.gold:T.border}`,
+                background:tutorMode==="mcq"?`${T.gold}15`:T.surface,color:tutorMode==="mcq"?T.gold:T.muted,
+                fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:"0.06em",cursor:"pointer"}}>
+              MCQ PRACTICE
+            </button>
+            <button onClick={()=>setTutorMode("theory")} className="btn-press"
+              style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${tutorMode==="theory"?T.gold:T.border}`,
+                background:tutorMode==="theory"?`${T.gold}15`:T.surface,color:tutorMode==="theory"?T.gold:T.muted,
+                fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:"0.06em",cursor:"pointer"}}>
+              THEORY CHAT
+            </button>
+          </div>
+        </div>
+
+        {tutorMode==="mcq"&&(
         <div style={{padding:18,maxWidth:1000,margin:"0 auto",width:"100%"}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>SELECT SUBJECT</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
@@ -7219,6 +7401,63 @@ function TutorScreen({user,QB,onBack,dark,setDark,T,onUpgrade,resumeSession,onRe
             </BtnPrimary>
           )}
         </div>
+        )}
+
+        {tutorMode==="theory"&&!user.isPremium&&(
+          <div style={{padding:18,maxWidth:1000,margin:"0 auto",width:"100%",textAlign:"center"}}>
+            <div style={{fontSize:12.5,color:T.text,lineHeight:1.5,marginBottom:12}}>
+              Theory Chat is a Premium feature.
+            </div>
+            <button onClick={()=>onUpgrade&&onUpgrade("theory_chat_paywall")} className="btn-press"
+              style={{padding:"12px 16px",borderRadius:10,border:"none",
+                background:"linear-gradient(135deg,#004B3B 0%,#1B3A2A 45%,#8A6A1E 100%)",
+                color:"#F7F3EC",fontFamily:"'Playfair Display',serif",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              Unlock Theory Chat →
+            </button>
+          </div>
+        )}
+
+        {tutorMode==="theory"&&user.isPremium&&!selectedChatQuestion&&(
+          <div style={{padding:18,maxWidth:1000,margin:"0 auto",width:"100%"}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em",marginBottom:10}}>SELECT SUBJECT</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+              {userSubjects.map(sub=>{
+                const meta=SUBJECT_META[sub]||{icon:"BKS",color:"#B8973E"};
+                const active=sub===theorySubject;
+                return(
+                  <button key={sub} className="btn-press" onClick={()=>{setTheorySubject(sub);setTheoryQuestions([]);setTheoryQErr("");}}
+                    style={{padding:"8px 14px",border:`1px solid ${active?meta.color:T.border}`,borderRadius:8,background:active?`${meta.color}15`:T.surface,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+                    <SubjectBadge code={meta.icon} color={meta.color} size={16}/>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:active?meta.color:T.muted,fontWeight:active?700:400}}>{sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {theorySubject&&(
+              <BtnPrimary onClick={loadTheoryQuestionsForChat} T={T}>
+                {theoryQLoading?"Loading…":`Load ${theorySubject} Theory Questions →`}
+              </BtnPrimary>
+            )}
+            {theoryQErr&&<div style={{marginTop:10,fontSize:11,color:"#f87171"}}>{theoryQErr}</div>}
+            {theoryQuestions.length>0&&(
+              <div style={{marginTop:18,display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted,letterSpacing:"0.12em"}}>PICK A QUESTION TO CHAT ABOUT</div>
+                {theoryQuestions.map(q=>(
+                  <button key={q.id} className="btn-press" onClick={()=>setSelectedChatQuestion(q)}
+                    style={{textAlign:"left",padding:"12px 14px",borderRadius:10,border:`1px solid ${T.border}`,background:T.surface,cursor:"pointer"}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.gold,marginBottom:4}}>{q.year||""}{q.topic?` · ${q.topic}`:""}</div>
+                    <div style={{fontSize:12,color:T.text,lineHeight:1.5,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{q.question||"(untitled question)"}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tutorMode==="theory"&&user.isPremium&&selectedChatQuestion&&(
+          <AiTutorChatPanel user={user} question={selectedChatQuestion} T={T} onBack={()=>setSelectedChatQuestion(null)}/>
+        )}
+
         <AnimatePresence>{showFormulaBank&&(
           <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:0.15}} style={{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}}>
             <ReferenceBankScreen user={user} onBack={()=>setShowFormulaBank(false)} dark={dark} setDark={setDark} T={T}/>

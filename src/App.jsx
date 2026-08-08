@@ -11410,7 +11410,28 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   };
 
   const YEARS=[2019,2020,2021,2022,2024,2025];
-  const subjectList=user.subjects||[];
+
+  // Subjects confirmed to actually have Theory (essay/structured) content in
+  // Firestore, based on which past-paper source PDFs have been transcribed
+  // into theoryQuestions so far. user.subjects includes every subject the
+  // student is registered for (MCQ + Theory both), which is wider than what
+  // Theory practice actually has behind it — e.g. Literature in English has
+  // objective questions but zero Theory questions right now, so it was being
+  // offered as a Theory subject and silently dead-ending every student who
+  // picked it, for every year, with no way to tell it apart from a real
+  // "wrong year" miss. Filtering here instead of just showing the empty-state
+  // message means students never see a subject they can't actually use.
+  //
+  // ⚠️ This list should be re-verified against a live distinct-subject query
+  // on theoryQuestions once Firestore quota resets — it's built from known
+  // transcription work, not a direct DB read, so treat it as "confirmed good"
+  // rather than "confirmed complete." Add a subject here only once real
+  // Theory content for it has actually been added.
+  const THEORY_CONTENT_SUBJECTS=useMemo(()=>new Set([
+    "Mathematics","Physics","Chemistry","Agricultural Science",
+    "Biology","Economics","Government","Geography"
+  ]),[]);
+  const subjectList=(user.subjects||[]).filter(s=>THEORY_CONTENT_SUBJECTS.has(s));
 
   // Docs with confirmed broken question content (empty, raw table data,
   // truncated, merged multiple questions, or OCR corruption), held out of

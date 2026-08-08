@@ -15,58 +15,6 @@ if (!getApps().length) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-// Added: Aug 3, 2026 — Firestore daily read quota exhausted mid-exam-night
-// (RESOURCE_EXHAUSTED confirmed in Firebase logs). Quota resets at midnight
-// Pacific / next UTC day. This block + everywhere else tagged
-// "TEMP EMERGENCY PATCH" below should be reverted tomorrow once the
-// permanent fix (Firebase Auth custom claims for isPremium, so premium
-// status travels on the verified ID token with zero Firestore reads) is in.
-//
-// Hardcoded allowlist of verified premium emails (pulled from Firestore
-// console screenshots since Firestore itself can't be queried right now).
-// Matched against decoded.email from verifyIdToken() — that's Firebase AUTH,
-// a separate service from Firestore, unaffected by this quota outage.
-const TEMP_PREMIUM_EMAILS = new Set([
-  "ogunsanyaoyindamola06@gmail.com",
-  "adenekanmoses2009@gmail.com",
-  "praiseoloyede358@gmail.com",
-  "feranmiisrea1380@gmail.com",
-  "sarahadeosun27@gmail.com",
-  "olamijuwonjohn@gmail.com",
-  "miracleodukoya5@gmail.com",
-  "doyeafilakatamara@gmail.com",
-  "sira72026@gmail.com",
-  "ogbeborfeyisola@gmail.com",
-  "violetugwu6@gmail.com",
-  "olumidegoodness735@gmail.com",
-  "fathiabell009@gmail.com",
-  "boluwatifebobade048@gmail.com",
-  "afolabiboluwatife103@gmail.com",
-  "wittysage143@gmail.com",
-  "jommymaks@gmail.com",
-  "elenasulufinela@gmail.com",
-  "d22343480@gmail.com",
-  "icent450@gmail.com",
-  "ohizmiracool@gmail.com",
-  "akindess210@gmail.com",
-  "softflame38@gmail.com",
-  "manuellaodimayo@gmail.com",
-  "luyipediaacademy@gmail.com",
-  "ismailabolade27@gmail.com",
-  "crediqapp@gmail.com",
-  "favourwrites4@gmail.com",
-  "adewoletojuba09@gmail.com",
-  "elijaholuyinkais@gmail.com",
-  "stephrex602@gmail.com",
-  "davidawaye2009@gmail.com",
-  "taiwooloyedewrites@gmail.com",
-  "seteminire013@gmail.com",
-  "motiowoaje@gmail.com",
-  "adeniranmubarak18@gmail.com",
-]);
-
 // In-memory daily-cap counter — replaces the Firestore aiTutorCounters
 // read+write for tonight. Lives only in this function instance's memory, so
 // it resets on a cold start (Vercel may spin up multiple instances under
@@ -369,15 +317,23 @@ export default async function handler(req, res) {
     return;
   }
 
-  // TEMP EMERGENCY PATCH - REMOVE AFTER FIRESTORE QUOTA RESET
-  // Was: a Firestore `users/{uid}` read to check isPremium. Replaced with the
-  // hardcoded allowlist above, matched on decoded.email (Firebase Auth,
-  // verified server-side via verifyIdToken — not user-supplied, so this is
-  // not a spoofable check). We lose the old "Account not found" 403 for a
-  // deleted/nonexistent user doc, but a valid verified ID token already means
-  // this is a real authenticated Firebase user, so that's an acceptable gap
-  // for one night.
-  const isPremium = TEMP_PREMIUM_EMAILS.has(decoded.email);
+  // Firestore is the source of truth for premium status — read the user's
+  // own doc, matched on their verified UID (not user-supplied, so this isn't
+  // spoofable). Unlike grade-theory.js (which is premium-only end-to-end and
+  // can safely 500/403 on any lookup problem), this endpoint also serves free
+  // users on Explain mode — so a missing doc or a transient Firestore error
+  // here degrades to isPremium=false (free tier) instead of blocking the
+  // whole request. That's a deliberate fail-closed choice: worst case a
+  // premium user briefly gets treated as free during a Firestore hiccup,
+  // which is recoverable by retrying, rather than free users being locked
+  // out entirely by an unrelated read failure.
+  let isPremium = false;
+  try {
+    const userDoc = await getFirestore().collection("users").doc(decoded.uid).get();
+    isPremium = userDoc.exists && userDoc.data()?.isPremium === true;
+  } catch (err) {
+    console.error("Firestore isPremium read failed — treating as free tier for this request:", err);
+  }
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {

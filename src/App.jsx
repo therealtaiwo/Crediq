@@ -6022,15 +6022,33 @@ function preprocessMathText(text){
 // match this long is never legitimate math, so it's left as literal text
 // (showing a stray $ character at worst) instead of being sent through
 // KaTeX — a visibly broken sentence is far more readable than a mangled one.
+//
+// The length cap alone doesn't catch every case: the AI sometimes wraps a
+// SHORT phrase in $ by mistake too (e.g. ", and its dimension is [MT^{-2}]"
+// — under 100 chars, so it'd pass the length check, but it's still prose,
+// not notation, and still gets mangled by KaTeX the same way). isLikelyProse
+// below catches this: real math essentially never contains multiple common
+// English function words as whole tokens ("and", "its", "is", "the"...);
+// a captured span with two or more of those is treated as literal text
+// instead of being sent through MathInline/MathBlock at all.
+const PROSE_WORD_RE=/\b(and|its|is|the|of|for|to|that|this|with|are|has|have|means|which|where|when|since|because|then|than|but|not|from)\b/gi;
+function isLikelyProse(content){
+  const matches=content.match(PROSE_WORD_RE);
+  return matches&&matches.length>=2;
+}
 function renderMathText(line,T){
   line=preprocessMathText(line);
   const parts=line.split(/(\$\$[^$]{1,300}\$\$|\$[^$]{1,100}\$)/g);
   return parts.map((part,i)=>{
     if(part.startsWith("$$")&&part.endsWith("$$")&&part.length>3){
-      return <MathBlock key={i} latex={part.slice(2,-2)}/>;
+      const inner=part.slice(2,-2);
+      if(isLikelyProse(inner))return <Fragment key={i}>{renderInlineBold(inner,T)}</Fragment>;
+      return <MathBlock key={i} latex={inner}/>;
     }
     if(part.startsWith("$")&&part.endsWith("$")&&part.length>1){
-      return <MathInline key={i} latex={part.slice(1,-1)}/>;
+      const inner=part.slice(1,-1);
+      if(isLikelyProse(inner))return <Fragment key={i}>{renderInlineBold(inner,T)}</Fragment>;
+      return <MathInline key={i} latex={inner}/>;
     }
     return <Fragment key={i}>{renderInlineBold(part,T)}</Fragment>;
   });

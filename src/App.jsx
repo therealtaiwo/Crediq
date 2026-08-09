@@ -6009,9 +6009,22 @@ function preprocessMathText(text){
 // existing bold-text renderer, so **bold** and $math$ can coexist on one line.
 // Runs preprocessMathText first so \[ \] / \( \) / vector-arrow input is
 // normalized even for callers that don't pre-normalize themselves.
+//
+// Match length is CAPPED (100 chars inline / 300 block), not open-ended.
+// Without this, a single stray/misplaced $ anywhere in the AI's raw output
+// (the model does occasionally drop one, especially in longer freeform Chat
+// replies) makes the old unbounded regex treat the NEXT $ it finds —
+// possibly a full sentence later — as the closing delimiter, swallowing all
+// the prose in between into one "math" block. KaTeX then renders that prose
+// as implicitly-multiplied single-letter variables, which silently strips
+// every space between words — that's the exact "wordsallmashedtogether"
+// garbage this was producing. Real inline/block math is always short; a
+// match this long is never legitimate math, so it's left as literal text
+// (showing a stray $ character at worst) instead of being sent through
+// KaTeX — a visibly broken sentence is far more readable than a mangled one.
 function renderMathText(line,T){
   line=preprocessMathText(line);
-  const parts=line.split(/(\$\$[^$]+\$\$|\$[^$]+\$)/g);
+  const parts=line.split(/(\$\$[^$]{1,300}\$\$|\$[^$]{1,100}\$)/g);
   return parts.map((part,i)=>{
     if(part.startsWith("$$")&&part.endsWith("$$")&&part.length>3){
       return <MathBlock key={i} latex={part.slice(2,-2)}/>;

@@ -6572,15 +6572,15 @@ function getQuestionPartGroups(question){
   if(sqs.length===0){
     const text=theoryQuestionPreview(question);
     if(!text)return[];
-    return[{label:"",marks:theoryQuestionMarks(question),items:[{badgeLabel:"",text,marks:null}]}];
+    return[{label:"",marks:theoryQuestionMarks(question),stem:"",items:[{badgeLabel:"",text,marks:null}]}];
   }
   return sqs.map(sq=>{
     const partLabel=sq.part?`(${sq.part.toUpperCase()})`:"";
-    const romanParts=parseRomanSubParts(sq.text);
-    const items=romanParts
-      ?romanParts.map(rp=>({badgeLabel:rp.label,text:rp.content,marks:rp.marks}))
+    const parsed=parseRomanSubParts(sq.text);
+    const items=parsed
+      ?parsed.parts.map(rp=>({badgeLabel:rp.label,text:rp.content,marks:rp.marks}))
       :[{badgeLabel:"",text:sq.text||"",marks:sq.marks}];
-    return{label:partLabel,marks:sq.marks,items};
+    return{label:partLabel,marks:sq.marks,stem:parsed?parsed.stem:"",items};
   });
 }
 // The tappable version of TheoryScreen's read-only question breakdown — same
@@ -6599,6 +6599,9 @@ function QuestionPartsBreakdown({question,onTapPart,T}){
               <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:T.gold,fontWeight:700}}>{g.label}</span>
               {g.marks&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:T.muted}}>{g.marks} mark{g.marks==1?"":"s"}</span>}
             </div>
+          )}
+          {g.stem&&(
+            <div style={{fontSize:12.5,lineHeight:1.55,color:T.text,marginBottom:8}}>{renderMathText(g.stem,T)}</div>
           )}
           <div style={{display:"flex",flexDirection:"column"}}>
             {g.items.map((item,ii)=>(
@@ -11300,11 +11303,21 @@ function hashTheoryAnswer(text, photo) {
 // own row with its own mark badge. Falls back to the original single-block
 // render untouched for any sq.text that doesn't have 2+ such markers — most
 // short sub-questions don't, and should look exactly as they did before.
+// Parses "(i) ... (ii) ... (iii) ..." roman-numeral sub-items out of a part's
+// stored text, e.g. sq.text for part (B) of the race-car question. Returns
+// {stem, parts} — `stem` is whatever text comes BEFORE the first roman
+// numeral (e.g. "A race car moves such that its position is given as
+// X = 0.75t^n + 5.0t + 1. Find:") and must be shown once, above the list;
+// dropping it silently (the previous behavior — this function used to return
+// just the array) is a real data-loss bug, not a missing-database-content
+// issue: the stem text IS present in sq.text, this function was just
+// discarding everything before the first `(i)` match instead of keeping it.
 function parseRomanSubParts(text){
   if(!text)return null;
   const ROMAN=/\((i{1,3}|iv|v|vi{0,3}|ix|x)\)/gi;
   const matches=[...text.matchAll(ROMAN)];
   if(matches.length<2)return null;
+  const stem=text.slice(0,matches[0].index).trim();
   const parts=[];
   for(let i=0;i<matches.length;i++){
     const label=matches[i][0];
@@ -11316,15 +11329,19 @@ function parseRomanSubParts(text){
     if(markMatch){marks=markMatch[1];content=content.slice(0,markMatch.index).trim();}
     parts.push({label,content,marks});
   }
-  return parts;
+  return{stem,parts};
 }
 function SubQuestionText({text,T}){
-  const parts=parseRomanSubParts(text);
-  if(!parts){
+  const parsed=parseRomanSubParts(text);
+  if(!parsed){
     return <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{renderMathText(text,T)}</div>;
   }
+  const{stem,parts}=parsed;
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {stem&&(
+        <div style={{fontSize:14,lineHeight:1.6,color:T.text}}>{renderMathText(stem,T)}</div>
+      )}
       {parts.map((p,i)=>(
         <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
           <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,color:T.gold,flexShrink:0,minWidth:22,paddingTop:1}}>{p.label}</span>

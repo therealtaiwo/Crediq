@@ -11422,6 +11422,17 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   // "wrong year" miss. Filtering here instead of just showing the empty-state
   // message means students never see a subject they can't actually use.
   //
+  // CRS, Islamic Religious Studies, and Literature in English added
+  // 2026-08-09 after closing their content gaps (naming-fix rename +
+  // 98 new model-answer docs across 2019/2020/2021/2022/2024) — all three
+  // now have full 2019-2022,2024-2025 coverage, verified via
+  // theoryCoverageReport.cjs against live Firestore, not just known
+  // transcription work.
+  //
+  // Accounting and Business Studies are NOT added yet — they have partial
+  // content (2021,2022,2024,2025) but are still missing 2019/2020, so
+  // leaving them out for now rather than half-offering a subject.
+  //
   // ⚠️ This list should be re-verified against a live distinct-subject query
   // on theoryQuestions once Firestore quota resets — it's built from known
   // transcription work, not a direct DB read, so treat it as "confirmed good"
@@ -11429,7 +11440,8 @@ function TheoryScreen({user,onEnd,onBack,T,onUpgrade}){
   // Theory content for it has actually been added.
   const THEORY_CONTENT_SUBJECTS=useMemo(()=>new Set([
     "Mathematics","Physics","Chemistry","Agricultural Science",
-    "Biology","Economics","Government","Geography"
+    "Biology","Economics","Government","Geography",
+    "CRS","Islamic Religious Studies","Literature in English"
   ]),[]);
   const subjectList=(user.subjects||[]).filter(s=>THEORY_CONTENT_SUBJECTS.has(s));
 

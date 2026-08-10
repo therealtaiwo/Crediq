@@ -391,7 +391,18 @@ export default async function handler(req, res) {
   // block itself), and capped in MESSAGES not generations, since one long
   // back-and-forth conversation can already cost as much in tokens as many
   // separate Explain calls would.
-  const AI_TUTOR_CHAT_DAILY_CAP = 40;
+  const AI_TUTOR_CHAT_DAILY_CAP = 150; // raised 40 -> 100 -> 150 on 2026-08-10.
+  // Calculated, not guessed: with Objective's Explain/Followup traffic quiet,
+  // Chat now has most of the shared 1,000 RPD (primary model) to itself.
+  // Reserving 10% of that for Notes/residual Explain/Followup leaves a 900/day
+  // pool; assuming ~15% of the 40 premium users (~6) are actively chatting on
+  // the same day (a "not much traffic" study-prep app, not a worst-case blast),
+  // 900 / 6 ≈ 150/user/day stays within budget even if that assumption is off
+  // by a couple of users, while giving ~3.75x headroom over the one real case
+  // seen so far of a student exhausting the old 40/day cap in a single
+  // genuine study session. If usage grows well past this, watch the "served
+  // by fallback model" console warnings (logged on every spillover call) —
+  // that's the real signal to revisit this number, not a fixed schedule.
   // Bounds how much conversation history gets resent to Groq on every
   // message — without this, a very long-running chat keeps growing its own
   // input token cost turn after turn. 16 messages = roughly 8 back-and-forth
